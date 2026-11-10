@@ -1,0 +1,220 @@
+import SwiftUI
+import UIKit
+
+/// The ScrollGuard panel: a native sheet over Instagram, opened by touching and holding the top
+/// edge of the screen.
+struct ControlPanel: View {
+    @EnvironmentObject private var browser: BrowserModel
+    @EnvironmentObject private var store: SettingsStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmClear = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    StatusHeader(isProtecting: store.settings.isProtecting,
+                                 blocked: browser.blockedCount, hidden: browser.hiddenCount)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+
+                Section {
+                    FilterToggle(title: "Hide Reels",
+                                 detail: "Removes the Reels tab and suggested reels.",
+                                 isOn: $store.settings.hideReels)
+                    FilterToggle(title: "Block the Reels viewer",
+                                 detail: "Stops every way into endless scrolling.",
+                                 isOn: $store.settings.blockReelsFeed)
+                    FilterToggle(title: "Open clips as posts",
+                                 detail: "A clip opens alone, with nothing to scroll into.",
+                                 isOn: $store.settings.clipsAsPosts)
+                } header: {
+                    Text("Instagram")
+                } footer: {
+                    Text("Clips posted by people you follow stay in your feed.")
+                }
+
+                Section {
+                    Button {
+                        browser.loadHome()
+                        dismiss()
+                    } label: {
+                        Label("Go to feed", systemImage: "house")
+                    }
+                    Button {
+                        browser.reload()
+                        dismiss()
+                    } label: {
+                        Label("Reload page", systemImage: "arrow.clockwise")
+                    }
+                }
+
+                Section {
+                    LabeledContent("Instagram account", value: accountText)
+                    Button(role: .destructive) {
+                        confirmClear = true
+                    } label: {
+                        Label("Clear browsing data", systemImage: "trash")
+                    }
+                } footer: {
+                    Text("You sign in on Instagram's own page. ScrollGuard never sees or stores your password.")
+                }
+
+                Section {
+                    NavigationLink {
+                        DiagnosticsView()
+                    } label: {
+                        Label("Diagnostics", systemImage: "stethoscope")
+                    }
+                } footer: {
+                    Text("ScrollGuard \(DeviceInfo.appVersion)")
+                }
+            }
+            .navigationTitle("ScrollGuard")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .confirmationDialog("Clear browsing data?", isPresented: $confirmClear, titleVisibility: .visible) {
+                Button("Clear and sign out", role: .destructive) {
+                    Task { await browser.clearBrowsingData() }
+                    dismiss()
+                }
+            } message: {
+                Text("Removes cookies, caches and site data. You will have to sign in to Instagram again.")
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .preferredColorScheme(.dark)
+        .onAppear { browser.refreshSignInState() }
+    }
+
+    private var accountText: String {
+        switch browser.isSignedIn {
+        case true?: return "Signed in"
+        case false?: return "Signed out"
+        case nil: return "Checking…"
+        }
+    }
+}
+
+private struct StatusHeader: View {
+    let isProtecting: Bool
+    let blocked: Int
+    let hidden: Int
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: isProtecting ? "shield.lefthalf.filled" : "shield.slash")
+                .font(.system(size: 40, weight: .light))
+                .foregroundStyle(isProtecting ? Color.accentColor : Color.secondary)
+                .contentTransition(.symbolEffect(.replace))
+            Text(isProtecting ? "Reels are hidden" : "Protection is reduced")
+                .font(.title3.weight(.semibold))
+            HStack(spacing: 12) {
+                StatTile(value: blocked, label: "Blocked")
+                StatTile(value: hidden, label: "Hidden")
+            }
+            Text("Since the app was opened")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+    }
+}
+
+private struct StatTile: View {
+    let value: Int
+    let label: String
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text("\(value)")
+                .font(.title2.weight(.semibold).monospacedDigit())
+                .contentTransition(.numericText())
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private struct FilterToggle: View {
+    let title: String
+    let detail: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .tint(Color.accentColor)
+    }
+}
+
+/// The log of what the app did, with one button to copy all of it. This is what to send when
+/// something does not work on the phone.
+struct DiagnosticsView: View {
+    @EnvironmentObject private var browser: BrowserModel
+    @EnvironmentObject private var log: DiagnosticsLog
+    @State private var copied = false
+
+    var body: some View {
+        List {
+            Section {
+                Button {
+                    UIPasteboard.general.string = browser.report()
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    copied = true
+                } label: {
+                    Label(copied ? "Copied" : "Copy report", systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                ShareLink(item: browser.report()) {
+                    Label("Share report", systemImage: "square.and.arrow.up")
+                }
+            } footer: {
+                Text("The report lists the pages opened (without search terms or tokens), errors and what was blocked. It contains no passwords and no cookie values, and leaves the phone only if you send it.")
+            }
+
+            if !log.previousSession.isEmpty {
+                Section("Previous session") {
+                    ForEach(Array(log.previousSession.enumerated()), id: \.offset) { item in
+                        LogLine(text: item.element)
+                    }
+                }
+            }
+
+            Section("This session") {
+                ForEach(log.entries.reversed()) { entry in
+                    LogLine(text: log.line(entry))
+                }
+            }
+        }
+        .navigationTitle("Diagnostics")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct LogLine: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+    }
+}

@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  A stand-in for instagram.com's signed-in home feed on a phone. It is NOT a copy of the real
+  page: it only reproduces the shapes the filter relies on (links by href, <article> posts, a
+  bottom bar of sibling entries). Class names are made up on purpose, the filter never uses them.
+-->
+<html>
+<head><meta charset="utf-8"><title>feed fixture</title></head>
+<body>
+  <main>
+    <div id="feed">
+      <article id="photo-post">
+        <a href="/alice/">alice</a>
+        <a href="/p/PHOTO12345/">2 hours ago</a>
+      </article>
+
+      <article id="clip-post">
+        <a href="/bob/">bob</a>
+        <a id="clip-link" href="/reel/CLIP1234567/">5 hours ago</a>
+      </article>
+
+      <div id="reels-shelf">
+        <div>
+          <span>Suggested reels</span>
+          <div>
+            <a id="shelf-link" href="/reels/SHELF111111/">one</a>
+            <a href="/reels/SHELF222222/">two</a>
+          </div>
+        </div>
+      </div>
+
+      <article id="last-post">
+        <a href="/carol/">carol</a>
+        <a href="/p/PHOTO67890/">1 day ago</a>
+      </article>
+    </div>
+  </main>
+
+  <div id="bottom-bar">
+    <div id="tab-home"><span><a href="/">Home</a></span></div>
+    <div id="tab-search"><span><a href="/explore/">Search</a></span></div>
+    <div id="tab-reels"><span><a id="reels-tab-link" href="/reels/">Reels</a></span></div>
+    <div id="tab-messages"><span><a id="messages-link" href="/direct/inbox/">Messages</a></span></div>
+    <div id="tab-profile"><span><a href="/me/">Profile</a></span></div>
+  </div>
+</body>
+</html>

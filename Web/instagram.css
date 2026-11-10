@@ -1,0 +1,40 @@
+/*
+ * ScrollGuard stylesheet for instagram.com, injected by instagram.js.
+ *
+ * Instagram's class names are generated and change often, so nothing here uses them.
+ * Elements are matched by where their links go, or by marks that instagram.js sets.
+ */
+
+/* --- Always on: make the page behave like an app, not a web page. --- */
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior-x: none;
+}
+
+input,
+textarea,
+[contenteditable],
+[contenteditable] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* --- Reels filter: only while <html data-sg-hide> is set (the "Hide Reels" switch). --- */
+
+/* The Reels entry of the navigation bar, hidden before the script finds its slot. */
+html[data-sg-hide] a[href="/reels/"],
+html[data-sg-hide] a[href^="/reels/?"] {
+  display: none !important;
+}
+
+/* Whatever instagram.js marked: the navigation slot, suggested-reels shelves. */
+html[data-sg-hide] [data-sg-hidden] {
+  display: none !important;
+}

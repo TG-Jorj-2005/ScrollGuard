@@ -1,0 +1,67 @@
+import Foundation
+
+/// What an instagram.com address is, as far as Reels go. The same rules as `classify` in
+/// Web/instagram.js: this copy handles full page loads, the script handles in-page navigation.
+enum ReelsRoute: Equatable {
+    /// The endless Reels viewer.
+    case feed
+    /// One clip, which can be shown as the post page /p/<id>/.
+    case clip(id: String)
+}
+
+enum Routes {
+    static let home = URL(string: "https://www.instagram.com/")!
+
+    /// Sites that stay inside the app: Instagram itself, plus the Meta sites its sign-in,
+    /// security checks and media go through. Any other site opens in a Safari sheet.
+    private static let familyDomains = [
+        "instagram.com", "cdninstagram.com", "facebook.com", "fb.com", "fbcdn.net", "fbsbx.com",
+        "meta.com", "messenger.com"
+    ]
+
+    static func isInstagram(_ url: URL) -> Bool {
+        host(url, isIn: ["instagram.com"])
+    }
+
+    static func isFamily(_ url: URL) -> Bool {
+        host(url, isIn: familyDomains)
+    }
+
+    private static func host(_ url: URL, isIn domains: [String]) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return domains.contains { host == $0 || host.hasSuffix("." + $0) }
+    }
+
+    static func classify(_ url: URL) -> ReelsRoute? {
+        guard isInstagram(url) else { return nil }
+        let parts = url.path.split(separator: "/").map(String.init)
+        guard let head = parts.first?.lowercased() else { return nil }
+        if head == "reels" {
+            if parts.count == 2, isClipID(parts[1]) { return .clip(id: parts[1]) }
+            return .feed
+        }
+        if head == "reel" {
+            if parts.count >= 2, isClipID(parts[1]) { return .clip(id: parts[1]) }
+            return .feed
+        }
+        return nil
+    }
+
+    static func postURL(clipID: String) -> URL {
+        URL(string: "https://www.instagram.com/p/\(clipID)/") ?? home
+    }
+
+    private static func isClipID(_ text: String) -> Bool {
+        guard text.count >= 5, text.lowercased() != "audio" else { return false }
+        return text.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && (CharacterSet.alphanumerics.contains(scalar) || scalar == "_" || scalar == "-")
+        }
+    }
+}
+
+extension URL {
+    /// Host and path only, for the diagnostics log: no query, so no tokens or search terms.
+    var redacted: String {
+        (host ?? scheme ?? "?") + path
+    }
+}

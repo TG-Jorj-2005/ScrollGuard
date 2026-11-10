@@ -1,0 +1,139 @@
+name: Build
+
+# Tests the filter, builds ScrollGuard for iPhone on a macOS runner and publishes an UNSIGNED
+# .ipa as a GitHub Release. SideStore signs it on the iPhone with your own free Apple account:
+# no certificate, profile, Apple ID or password is used or stored here.
+#
+# The newest build is always at:
+#   https://github.com/<owner>/<repo>/releases/latest/download/ScrollGuard.ipa
+on:
+  push:
+    branches: [main]
+    paths: ["App/**", "Web/**", "tests/**", "project.yml", ".github/workflows/build.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XCODE_VERSION: "26.6"
+  # XcodeGen pinned to a release and its checksum.
+  XCODEGEN_VERSION: "2.46.0"
+  XCODEGEN_SHA256: "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806"
+  # Must equal PRODUCT_BUNDLE_IDENTIFIER in project.yml (checked after the build).
+  BUNDLE_ID: io.github.tg-jorj-2005.scrollguard
+
+jobs:
+  filter-tests:
+    name: Filter tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Run the filter against the HTML fixtures
+        working-directory: tests
+        run: |
+          node --version
+          npm ci --no-audit --no-fund
+          npm test
+
+  ipa:
+    name: Unsigned IPA
+    needs: filter-tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write # to publish the release
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Select Xcode
+        run: |
+          XCODE_APP="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ -d "$XCODE_APP" ]; then
+            sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          else
+            echo "::warning::Xcode ${XCODE_VERSION} is not on this runner; using its default. Installed:"
+            ls -d /Applications/Xcode_*.app
+          fi
+          xcodebuild -version
+          echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+
+      - name: Install XcodeGen
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Version numbers
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\} *$/\1/p' project.yml | head -1)
+          # The run number only grows, so every build is newer than the last one. The offset
+          # keeps it above the builds of the earlier project installed under the same bundle ID.
+          BUILD=$((GITHUB_RUN_NUMBER + 100))
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "ScrollGuard $VERSION (build $BUILD)"
+
+      - name: Generate the Xcode project
+        run: xcodegen generate
+
+      - name: Build (Release, iphoneos, unsigned)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+        run: |
+          set -o pipefail
+          # CODE_SIGNING_ALLOWED=NO: nothing is signed here; SideStore signs on the device.
+          xcodebuild archive -project ScrollGuard.xcodeproj -scheme ScrollGuard -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/ScrollGuard.xcarchive \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            > build.log 2>&1 || { echo "::group::Compiler errors"; grep -E "error:|fatal error" build.log | sort -u | head -80; echo "::endgroup::"; tail -40 build.log; exit 1; }
+          echo "Compiler warnings:"
+          grep -E "^/.*: warning: " build.log | sort -u | head -60 || echo "none"
+
+      - name: Package and check the IPA
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+        run: |
+          APP=build/ScrollGuard.xcarchive/Products/Applications/ScrollGuard.app
+          test -d "$APP"
+          plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Info.plist"; }
+          check() { if [ "$2" != "$3" ]; then echo "::error::$1 is '$2', expected '$3'"; exit 1; fi; echo "ok  $1 = $2"; }
+          check "bundle identifier" "$(plist CFBundleIdentifier)" "$BUNDLE_ID"
+          check "version" "$(plist CFBundleShortVersionString)" "$VERSION"
+          check "build" "$(plist CFBundleVersion)" "$BUILD"
+          check "platform" "$(plist DTPlatformName)" "iphoneos"
+          for resource in instagram.js instagram.css Assets.car; do
+            test -f "$APP/$resource" || { echo "::error::$resource is missing from the app"; exit 1; }
+            echo "ok  $resource is in the app"
+          done
+          lipo -archs "$APP/ScrollGuard" | grep -qx "arm64" || { echo "::error::the binary is not arm64 only"; exit 1; }
+          echo "ok  binary is arm64"
+          test ! -e "$APP/embedded.mobileprovision" && echo "ok  no provisioning profile inside"
+
+          mkdir -p dist/Payload
+          # ditto keeps the bundle exactly as built; zip -X leaves out macOS extended attributes.
+          ditto "$APP" dist/Payload/ScrollGuard.app
+          (cd dist && zip -qry -X ScrollGuard.ipa Payload && rm -rf Payload)
+          ls -la dist
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+        run: |
+          NOTES="Unsigned IPA for SideStore, built from ${GITHUB_SHA::7}. Open ScrollGuard.ipa on the iPhone and choose SideStore."
+          gh release create "build-$BUILD" dist/ScrollGuard.ipa --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "ScrollGuard $VERSION (build $BUILD)" --notes "$NOTES" --latest
+          echo "### ScrollGuard $VERSION (build $BUILD)" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/ScrollGuard.ipa" >> "$GITHUB_STEP_SUMMARY"

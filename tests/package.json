@@ -1,0 +1,11 @@
+{
+  "name": "scrollguard-filter-tests",
+  "private": true,
+  "description": "Runs Web/instagram.js against HTML fixtures in jsdom. No iPhone or Mac needed.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}
