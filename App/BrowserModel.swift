@@ -11,6 +11,8 @@ import WebKit
 final class BrowserModel: NSObject, ObservableObject {
     enum Failure: Equatable {
         case offline
+        /// Instagram answered with an error status and an empty page (429: too many requests).
+        case http(Int)
         case other(String)
     }
 
@@ -39,9 +41,10 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published var toast: Toast?
     /// A link to another website, shown in a Safari sheet.
     @Published var externalLink: ExternalLink?
-    /// The page's own background colour. The strips above and below the page take it, so they
-    /// join the page without a seam.
-    @Published private(set) var chromeColor: UIColor = .black
+    /// The colours of the page's top and bottom edges, reported by the filter. The strips behind
+    /// the status bar and the home indicator take them, so they join the page without a seam.
+    @Published private(set) var topEdgeColor: UIColor = .black
+    @Published private(set) var bottomEdgeColor: UIColor = .black
 
     private let store: SettingsStore
     private let log = DiagnosticsLog.shared
@@ -49,6 +52,7 @@ final class BrowserModel: NSObject, ObservableObject {
     private let refreshControl = UIRefreshControl()
     private var started = false
     private var userAgent = ""
+    private var mainFrameStatus = 200
     private var recentBlocks: [Date] = []
     private var rewrittenClips: [String: Date] = [:]
     private var bouncedClips = Set<String>()
@@ -154,8 +158,19 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
+    /// The structure of the page on screen, from the filter: bars, scrolling areas, videos.
+    private func pageSnapshot() async -> String {
+        await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
+            let script = "window.__scrollGuard ? window.__scrollGuard.snapshot() : 'the filter is not running on this page'"
+            webView.evaluateJavaScript(script) { value, error in
+                continuation.resume(returning: value as? String ?? "unavailable: \(error?.localizedDescription ?? "no result")")
+            }
+        }
+    }
+
     /// The text behind "Copy report" in Diagnostics.
-    func report() -> String {
+    func makeReport() async -> String {
+        let snapshot = await pageSnapshot()
         var lines = [
             "ScrollGuard \(DeviceInfo.appVersion)",
             "\(DeviceInfo.system) · \(DeviceInfo.model)",
@@ -163,7 +178,10 @@ final class BrowserModel: NSObject, ObservableObject {
             "Signed in: \(isSignedIn.map { $0 ? "yes" : "no" } ?? "unknown")",
             "Settings: \(store.settings.json)",
             "Page: \(webView.url?.redacted ?? "(none)")",
-            "Hidden elements: \(hiddenCount) · Blocked: \(blockedCount)"
+            "Hidden elements: \(hiddenCount) · Blocked: \(blockedCount)",
+            "",
+            "--- page on screen ---",
+            snapshot
         ]
         if !log.previousSession.isEmpty {
             lines.append("")
@@ -233,20 +251,17 @@ final class BrowserModel: NSObject, ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] url in self?.urlChanged(url) }
             .store(in: &subscriptions)
-        // WebKit works this colour out from the page's background.
-        webView.publisher(for: \.underPageBackgroundColor)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] color in self?.pageBackgroundChanged(color) }
-            .store(in: &subscriptions)
     }
 
-    private func pageBackgroundChanged(_ color: UIColor?) {
-        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-        guard let color, color.getRed(&red, green: &green, blue: &blue, alpha: &alpha), alpha > 0.9 else { return }
-        // Only dark pages: the status bar's text is white and has to stay readable.
+    /// A colour sent by the filter as [r, g, b]. Only dark ones are taken: the status bar's text
+    /// is white and has to stay readable. Anything else gives black.
+    private static func edgeColor(_ value: Any?) -> UIColor {
+        guard let parts = value as? [Any], parts.count == 3 else { return .black }
+        let channels = parts.compactMap { ($0 as? NSNumber)?.doubleValue }
+        guard channels.count == 3, channels.allSatisfy({ $0 >= 0 && $0 <= 255 }) else { return .black }
+        let red = channels[0] / 255, green = channels[1] / 255, blue = channels[2] / 255
         let luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
-        let next: UIColor = luminance < 0.25 ? color : .black
-        if next != chromeColor { chromeColor = next }
+        return luminance < 0.25 ? UIColor(red: red, green: green, blue: blue, alpha: 1) : .black
     }
 
     /// What is actually in the page, for the diagnostics log: sizes and counts, no content.
@@ -281,7 +296,7 @@ final class BrowserModel: NSObject, ObservableObject {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard let self, self.store.settings.blockReelsFeed,
                   let current = self.webView.url, Routes.classify(current) == .feed else { return }
-            self.registerBlock(path: current.path, via: "native")
+            self.registerBlock(path: Routes.shape(path: current.path), via: "native")
             if self.webView.canGoBack { self.webView.goBack() } else { self.loadHome() }
         }
     }
@@ -376,14 +391,14 @@ extension BrowserModel: WKNavigationDelegate {
         switch Routes.classify(url) {
         case .feed? where settings.blockReelsFeed:
             decisionHandler(.cancel)
-            registerBlock(path: url.path, via: "load")
+            registerBlock(path: Routes.shape(path: url.path), via: "load")
             if webView.url == nil { loadHome() }
             return
         case .clip(let id)? where settings.clipsAsPosts && !bouncedClips.contains(id):
             if let rewrittenAt = rewrittenClips[id], Date().timeIntervalSince(rewrittenAt) < 5 {
                 // Instagram sent the post page straight back to the reel page: leave this clip alone.
                 bouncedClips.insert(id)
-                log.add("nav", "clip \(id) came back from /p/: left as a reel page")
+                log.add("nav", "a clip came back from /p/: left as a reel page")
             } else {
                 rewrittenClips[id] = Date()
                 log.add("nav", "clip as post \(url.redacted)")
@@ -404,6 +419,7 @@ extension BrowserModel: WKNavigationDelegate {
         if navigationResponse.isForMainFrame, let response = navigationResponse.response as? HTTPURLResponse {
             let type = response.value(forHTTPHeaderField: "Content-Type") ?? "?"
             log.add("page", "response \(response.statusCode) \(response.url?.redacted ?? "?") (\(type))")
+            mainFrameStatus = response.statusCode
         }
         decisionHandler(.allow)
     }
@@ -415,6 +431,11 @@ extension BrowserModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         failure = nil
         hasShownFirstPage = true
+        // Off Instagram (a sign-in step on facebook.com) the filter does not run: plain black.
+        if let url = webView.url, !Routes.isInstagram(url) {
+            topEdgeColor = .black
+            bottomEdgeColor = .black
+        }
         log.add("page", "commit \(webView.url?.redacted ?? "?")")
     }
 
@@ -422,6 +443,16 @@ extension BrowserModel: WKNavigationDelegate {
         refreshControl.endRefreshing()
         log.add("page", "finish \(webView.url?.redacted ?? "?")")
         refreshSignInState()
+        // An error status with nothing in the page would be a blank screen: say what happened.
+        if mainFrameStatus >= 400 {
+            let status = mainFrameStatus
+            webView.evaluateJavaScript("document.body ? document.body.children.length : 0") { [weak self] value, _ in
+                let isEmpty = (value as? NSNumber)?.intValue ?? 0 == 0
+                Task { @MainActor [weak self] in
+                    if isEmpty { self?.failure = .http(status) }
+                }
+            }
+        }
         // Instagram draws its pages with JavaScript after the load finishes: look twice.
         probePage("content at finish")
         Task { [weak self] in
@@ -447,6 +478,7 @@ extension BrowserModel: WKNavigationDelegate {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         // iOS reclaimed the page's memory while the app was in the background: load it again.
         log.add("page", "web content process ended: reloading")
+        mainFrameStatus = 200
         reload()
     }
 }
@@ -506,7 +538,7 @@ extension BrowserModel: WKScriptMessageHandler {
         guard message.frameInfo.isMainFrame,
               let body = message.body as? [String: Any],
               let type = body["t"] as? String else { return }
-        let path = String((body["path"] as? String ?? "").prefix(120))
+        let path = Routes.shape(path: String((body["path"] as? String ?? "").prefix(200)))
         let via = String((body["via"] as? String ?? "").prefix(20))
 
         switch type {
@@ -523,6 +555,11 @@ extension BrowserModel: WKScriptMessageHandler {
                 hiddenCount += count
                 log.add("filter", "hid \(count) element\(count == 1 ? "" : "s")")
             }
+        case "edges":
+            let top = Self.edgeColor(body["top"])
+            let bottom = Self.edgeColor(body["bottom"])
+            if top != topEdgeColor { topEdgeColor = top }
+            if bottom != bottomEdgeColor { bottomEdgeColor = bottom }
         case "log":
             log.add("filter", body["text"] as? String ?? "")
         default:

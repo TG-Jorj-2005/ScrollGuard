@@ -41,7 +41,12 @@
     var target = event.target;
     var what;
     if (target && target !== window && (target.src || target.href)) {
-      what = 'failed to load ' + String(target.src || target.href).split('?')[0].slice(-90);
+      // Which server and what kind of file, not the address itself.
+      var source = String(target.src || target.href).split('?')[0];
+      var host = '?';
+      try { host = new URL(source, location.href).hostname; } catch (e) { /* keep '?' */ }
+      var extension = /\.[a-z0-9]{1,5}$/i.exec(source);
+      what = 'failed to load a ' + (extension ? extension[0] : target.tagName.toLowerCase()) + ' from ' + host;
     } else {
       var file = event.filename ? ' @ ' + String(event.filename).split('?')[0].slice(-60) + ':' + event.lineno : '';
       what = 'script error: ' + String(event.message || 'unknown').slice(0, 140) + file;
@@ -100,8 +105,106 @@
     var bounced = readStore('sg-bounced');
     bounced[id] = 1;
     writeStore('sg-bounced', bounced);
-    post({ t: 'log', text: 'clip ' + id + ' came back from /p/: left as a reel page' });
+    post({ t: 'log', text: 'a clip came back from /p/: left as a reel page' });
     return true;
+  }
+
+  // ---------------------------------------------------------------- shapes
+
+  // For diagnostics, an address is reduced to its shape: "/direct/t/*/", "/<name>/", "/p/*/".
+  // Account names, conversation numbers and post ids never enter the log or the report.
+  var KNOWN_HEADS = ['reels', 'reel', 'p', 'explore', 'direct', 'stories', 'accounts', 'tv',
+    'challenge', 'notifications', 'your_activity', 'legal', 'about', 'web'];
+  var KNOWN_WORDS = ['inbox', 't', 'new', 'requests', 'tagged', 'reels', 'saved', 'audio', 'login',
+    'onetap', 'edit', 'tags', 'locations', 'search', 'people', 'highlights', 'comments', 'liked_by',
+    'followers', 'following', 'activity', 'signup', 'password', 'reset'];
+
+  function shape(href) {
+    var url;
+    try { url = new URL(href, location.href); } catch (e) { return '?'; }
+    if (!INSTAGRAM.test(url.hostname)) return 'external';
+    var parts = url.pathname.split('/').filter(Boolean);
+    if (!parts.length) return '/';
+    var out = parts.map(function (part, index) {
+      var word = part.toLowerCase();
+      if (index === 0) return KNOWN_HEADS.indexOf(word) >= 0 ? word : '<name>';
+      return KNOWN_WORDS.indexOf(word) >= 0 ? word : '*';
+    });
+    return '/' + out.join('/') + '/';
+  }
+
+  /** One element in a few words: tag, role, how it is positioned, whether it scrolls, its size. */
+  function describe(element) {
+    var style = getComputedStyle(element);
+    var box = element.getBoundingClientRect();
+    var text = element.tagName.toLowerCase();
+    var role = element.getAttribute('role');
+    if (role) text += '[' + role + ']';
+    if (style.position === 'fixed' || style.position === 'sticky') text += ' ' + style.position;
+    if (scrollsVertically(element, style)) text += ' scrolls';
+    if (style.scrollSnapType && style.scrollSnapType !== 'none') text += ' snap(' + style.scrollSnapType + ')';
+    return text + ' ' + Math.round(box.width) + 'x' + Math.round(box.height) + '@' + Math.round(box.top);
+  }
+
+  function scrollsVertically(element, style) {
+    return /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 40;
+  }
+
+  function linkShapes(root, limit) {
+    var counts = {};
+    var links = root.querySelectorAll('a[href]');
+    for (var i = 0; i < links.length && i < limit; i++) {
+      var key = shape(links[i].getAttribute('href'));
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }
+
+  /**
+   * The structure of the page on screen, for the diagnostics report: bars, scrolling areas,
+   * videos, dialogs and the shapes of links. No text, no names, no addresses.
+   */
+  function snapshot() {
+    var result = {
+      page: shape(location.pathname),
+      viewport: window.innerWidth + 'x' + window.innerHeight,
+      links: linkShapes(document, 3000),
+      videos: [],
+      dialogs: [],
+      bars: [],
+      scrollers: []
+    };
+    if (!document.body) return JSON.stringify(result);
+
+    var videos = document.querySelectorAll('video');
+    result.videoCount = videos.length;
+    for (var v = 0; v < videos.length && result.videos.length < 3; v++) {
+      var box = videos[v].getBoundingClientRect();
+      if (box.height < 50 || box.bottom < 0 || box.top > window.innerHeight) continue;
+      var chain = [];
+      for (var el = videos[v], depth = 0; el && el !== document.body && depth < 12; el = el.parentElement, depth++) {
+        chain.push(describe(el));
+      }
+      result.videos.push(chain);
+    }
+
+    var dialogs = document.querySelectorAll('[role="dialog"]');
+    for (var d = 0; d < dialogs.length && d < 5; d++) result.dialogs.push(describe(dialogs[d]));
+
+    var all = document.body.getElementsByTagName('*');
+    for (var i = 0; i < all.length && i < 5000; i++) {
+      var element = all[i];
+      var style = getComputedStyle(element);
+      var rect = element.getBoundingClientRect();
+      var wide = rect.width >= window.innerWidth * 0.8;
+      if ((style.position === 'fixed' || style.position === 'sticky') && wide && rect.height > 20 && rect.height < 200) {
+        if (result.bars.length < 8) result.bars.push(describe(element) + ' links ' + JSON.stringify(linkShapes(element, 40)));
+      }
+      if (scrollsVertically(element, style) && rect.height > window.innerHeight * 0.4) {
+        if (result.scrollers.length < 8) result.scrollers.push(describe(element));
+      }
+    }
+    return JSON.stringify(result);
   }
 
   // ---------------------------------------------------------------- navigation
@@ -294,6 +397,36 @@
     parent.appendChild(style);
   }
 
+  // ---------------------------------------------------------------- edge colours
+
+  // The app paints the strips behind the status bar and the home indicator in the colours of
+  // the page's top and bottom edges, so the page seems to reach the edges of the screen.
+
+  /** The solid background colour under a point, as [r, g, b], or null. */
+  function colourAt(x, y) {
+    for (var element = document.elementFromPoint(x, y); element; element = element.parentElement) {
+      var match = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(getComputedStyle(element).backgroundColor);
+      if (match && (match[4] === undefined || parseFloat(match[4]) > 0.9)) {
+        return [Number(match[1]), Number(match[2]), Number(match[3])];
+      }
+    }
+    return null;
+  }
+
+  var lastEdges = '';
+  function reportEdgeColours() {
+    var width = window.innerWidth;
+    var height = window.innerHeight;
+    if (!width || !height || !document.body) return;
+    var top = colourAt(width / 2, 1);
+    var bottom = colourAt(width / 2, height - 2);
+    var key = JSON.stringify([top, bottom]);
+    if (key === lastEdges) return;
+    lastEdges = key;
+    post({ t: 'edges', top: top, bottom: bottom });
+  }
+  setInterval(reportEdgeColours, 600);
+
   // ---------------------------------------------------------------- start
 
   Object.defineProperty(window, '__scrollGuard', {
@@ -305,7 +438,9 @@
         scan();
         enforce('settings');
       },
-      classify: classify
+      classify: classify,
+      shape: shape,
+      snapshot: snapshot
     }
   });
 
@@ -313,9 +448,17 @@
   if (cfg.hideReels && document.documentElement) document.documentElement.setAttribute('data-sg-hide', '');
   enforce('load');
 
-  new MutationObserver(function () {
+  // Scan at once, in the same turn in which Instagram added something and before the browser
+  // paints it. A tab that is hidden a moment after it was drawn is seen: the bar shows a gap,
+  // then its buttons jump together. Instagram redraws the bar on every page change.
+  new MutationObserver(function (records) {
     installStyle();
-    scheduleScan();
+    for (var i = 0; i < records.length; i++) {
+      if (records[i].addedNodes.length) {
+        scan();
+        return;
+      }
+    }
   }).observe(document.documentElement || document, { childList: true, subtree: true });
 
   // The observer only reports changes from now on: also look at what is already there, and

@@ -214,6 +214,54 @@ test('a clip that the site sends back from /p/ to /reel/ is then left alone (no 
   page.close();
 });
 
+test('a tab that Instagram draws again is hidden in the same turn, before it can be painted', async () => {
+  const page = open();
+  await sleep(250);
+  // Instagram redraws its bar on a page change: the old one goes, a new one arrives.
+  page.document.getElementById('bottom-bar').remove();
+  const bar = page.document.createElement('div');
+  bar.id = 'new-bar';
+  bar.innerHTML = '<div id="new-home"><a href="/">Home</a></div>' +
+    '<div id="new-search"><a href="/explore/">Search</a></div>' +
+    '<div id="new-reels"><a href="/reels/">Reels</a></div>' +
+    '<div id="new-profile"><a href="/me/">Profile</a></div>';
+  page.document.body.appendChild(bar);
+  // Mutation observers run in the microtask right after the change; a timer would be later.
+  await Promise.resolve();
+  assert.equal(isHidden(page.document, 'new-reels'), true);
+  assert.equal(isHidden(page.document, 'new-home'), false);
+});
+
+test('diagnostics: addresses are reduced to shapes, with no names or ids', async () => {
+  const page = open();
+  const shape = page.window.__scrollGuard.shape;
+  const cases = [
+    ['/', '/'],
+    ['/alice/', '/<name>/'],
+    ['/alice/reels/', '/<name>/reels/'],
+    ['/alice/tagged/', '/<name>/tagged/'],
+    ['/p/PHOTO12345/', '/p/*/'],
+    ['/reel/CLIP1234567/', '/reel/*/'],
+    ['/reels/', '/reels/'],
+    ['/direct/inbox/', '/direct/inbox/'],
+    ['/direct/t/340282366841710300949128/', '/direct/t/*/'],
+    ['/stories/alice/3141592653/', '/stories/*/*/'],
+    ['/accounts/login/?next=%2Falice%2F', '/accounts/login/'],
+    ['https://example.com/alice', 'external']
+  ];
+  for (const [input, expected] of cases) assert.equal(shape(input), expected, input);
+
+  const snapshot = page.window.__scrollGuard.snapshot();
+  const parsed = JSON.parse(snapshot);
+  assert.equal(parsed.page, '/');
+  assert.deepEqual(parsed.links, {
+    '/<name>/': 4, '/p/*/': 2, '/reel/*/': 1, '/reels/*/': 2, '/': 1, '/explore/': 1, '/reels/': 1, '/direct/inbox/': 1
+  });
+  for (const secret of ['alice', 'bob', 'carol', 'PHOTO12345', 'CLIP1234567', 'Suggested']) {
+    assert.equal(snapshot.includes(secret), false, `the snapshot must not contain "${secret}"`);
+  }
+});
+
 test('the filter does nothing on other sites (sign-in passes through facebook.com)', async () => {
   const page = open({ url: 'https://www.facebook.com/reels/' });
   await sleep(100);

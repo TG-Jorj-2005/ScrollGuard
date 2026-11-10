@@ -18,7 +18,8 @@ struct RootView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                StatusStrip(color: chrome, onTap: { browser.scrollToTop() }, onHold: openPanel)
+                StatusStrip(color: Color(uiColor: browser.topEdgeColor),
+                            onTap: { browser.scrollToTop() }, onHold: openPanel)
                     .frame(height: geometry.safeAreaInsets.top)
 
                 ZStack(alignment: .top) {
@@ -51,12 +52,13 @@ struct RootView: View {
             }
             .ignoresSafeArea(.container, edges: .top)
         }
-        // The strip under the home indicator takes the page's colour too.
-        .background(chrome.ignoresSafeArea())
+        // What shows under the home indicator: the colour of the page's bottom edge.
+        .background(Color(uiColor: browser.bottomEdgeColor).ignoresSafeArea())
         // Like Safari: the keyboard covers the page instead of squeezing it; Instagram's own
         // layout already moves the message box above the keyboard.
         .ignoresSafeArea(.keyboard)
-        .animation(.easeOut(duration: 0.3), value: browser.chromeColor)
+        .animation(.easeOut(duration: 0.25), value: browser.topEdgeColor)
+        .animation(.easeOut(duration: 0.25), value: browser.bottomEdgeColor)
         .animation(.easeOut(duration: 0.35), value: browser.hasShownFirstPage)
         .animation(.easeOut(duration: 0.25), value: browser.failure)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: browser.toast)
@@ -87,10 +89,6 @@ struct RootView: View {
             // screenshot can show it. Never set on the phone.
             if UserDefaults.standard.bool(forKey: "debugShowPanel") { showPanel = true }
         }
-    }
-
-    private var chrome: Color {
-        Color(uiColor: browser.chromeColor)
     }
 
     private func openPanel() {
@@ -182,22 +180,34 @@ private struct FailureView: View {
     private var title: String {
         switch failure {
         case .offline: return "No connection"
+        case .http: return "Instagram isn't answering"
         case .other: return "Couldn't open Instagram"
         }
     }
 
     private var detail: String {
         switch failure {
-        case .offline: return "Check Wi-Fi or mobile data, then try again."
-        case .other(let message): return message
+        case .offline:
+            return "Check Wi-Fi or mobile data, then try again."
+        case .http(429):
+            return "Instagram is limiting requests from this connection (error 429). Wait a minute, then try again."
+        case .http(let status):
+            return "Instagram answered with error \(status). Try again in a moment."
+        case .other(let message):
+            return message
         }
+    }
+
+    private var symbol: String {
+        if case .http = failure { return "hourglass" }
+        return "wifi.slash"
     }
 
     var body: some View {
         ZStack {
             Color.black
             VStack(spacing: 14) {
-                Image(systemName: "wifi.slash")
+                Image(systemName: symbol)
                     .font(.system(size: 40, weight: .light))
                     .foregroundStyle(.secondary)
                 Text(title)

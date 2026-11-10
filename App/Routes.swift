@@ -59,9 +59,36 @@ enum Routes {
     }
 }
 
+extension Routes {
+    private static let knownHeads: Set<String> = [
+        "reels", "reel", "p", "explore", "direct", "stories", "accounts", "tv", "challenge",
+        "notifications", "your_activity", "legal", "about", "web"
+    ]
+    private static let knownWords: Set<String> = [
+        "inbox", "t", "new", "requests", "tagged", "reels", "saved", "audio", "login", "onetap",
+        "edit", "tags", "locations", "search", "people", "highlights", "comments", "liked_by",
+        "followers", "following", "activity", "signup", "password", "reset"
+    ]
+
+    /// A path reduced to its shape, for the diagnostics log: "/direct/t/*/", "/<name>/",
+    /// "/p/*/". Account names, conversation numbers and post ids are never written down.
+    /// The same rule as `shape` in Web/instagram.js.
+    static func shape(path: String) -> String {
+        let parts = path.split(separator: "/").map { $0.lowercased() }
+        guard !parts.isEmpty else { return "/" }
+        let shaped = parts.enumerated().map { index, part -> String in
+            if index == 0 { return knownHeads.contains(part) ? part : "<name>" }
+            return knownWords.contains(part) ? part : "*"
+        }
+        return "/" + shaped.joined(separator: "/") + "/"
+    }
+}
+
 extension URL {
-    /// Host and path only, for the diagnostics log: no query, so no tokens or search terms.
+    /// What the diagnostics log says about an address: the site and, on Instagram, the shape of
+    /// the path. No query (tokens, search terms), no names or ids. Other sites: the site only.
     var redacted: String {
-        (host ?? scheme ?? "?") + path
+        let site = host ?? scheme ?? "?"
+        return Routes.isFamily(self) ? site + Routes.shape(path: path) : site
     }
 }

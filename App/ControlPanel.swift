@@ -177,17 +177,16 @@ struct DiagnosticsView: View {
         List {
             Section {
                 Button {
-                    UIPasteboard.general.string = browser.report()
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    copied = true
+                    Task {
+                        UIPasteboard.general.string = await browser.makeReport()
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        copied = true
+                    }
                 } label: {
                     Label(copied ? "Copied" : "Copy report", systemImage: copied ? "checkmark" : "doc.on.doc")
                 }
-                ShareLink(item: browser.report()) {
-                    Label("Share report", systemImage: "square.and.arrow.up")
-                }
             } footer: {
-                Text("The report lists the pages opened (without search terms or tokens), errors and what was blocked. It contains no passwords and no cookie values, and leaves the phone only if you send it.")
+                Text("The report describes the kinds of pages opened, errors, what was blocked and the structure of the page on screen. It has no account names, no conversation or post ids, no text from pages, no passwords and no cookie values. It leaves the phone only if you send it.")
             }
 
             if !log.previousSession.isEmpty {
