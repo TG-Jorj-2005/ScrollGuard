@@ -5,7 +5,7 @@ import Foundation
 enum ReelsRoute: Equatable {
     /// The endless Reels viewer.
     case feed
-    /// One clip, which can be shown as the post page /p/<id>/.
+    /// One clip, opened from a post, a profile or a conversation.
     case clip(id: String)
 }
 
@@ -45,10 +45,6 @@ enum Routes {
             return .feed
         }
         return nil
-    }
-
-    static func postURL(clipID: String) -> URL {
-        URL(string: "https://www.instagram.com/p/\(clipID)/") ?? home
     }
 
     private static func isClipID(_ text: String) -> Bool {

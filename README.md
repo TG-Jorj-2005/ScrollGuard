@@ -9,21 +9,25 @@ vede și nu stochează parola. User-Agent-ul este cel implicit al WebKit.
 
 ## Instalare și actualizare (SideStore)
 
-1. Pe iPhone, deschide în Safari:
-   `https://github.com/TG-Jorj-2005/ScrollGuard/releases/latest/download/ScrollGuard.ipa`
-2. Din Fișiere, apasă lung pe `ScrollGuard.ipa` → Partajează → SideStore.
+1. Pe iPhone, deschide în Safari `https://github.com/TG-Jorj-2005/ScrollGuard/releases/latest`
+   și descarcă fișierul cu numărul versiunii în nume, de exemplu `ScrollGuard-1.0.106.ipa`.
+2. Din Fișiere, apasă lung pe el → Partajează → SideStore.
 
-Actualizarea se face la fel: același link dă mereu ultimul build, iar aplicația se înlocuiește pe
-loc (rămâi autentificat), pentru că identificatorul `io.github.tg-jorj-2005.scrollguard` nu se
-schimbă.
+Actualizarea se face la fel, iar aplicația se înlocuiește pe loc (rămâi autentificat), pentru că
+identificatorul `io.github.tg-jorj-2005.scrollguard` nu se schimbă. Ce versiune rulează se vede
+câteva secunde la pornire, într-o etichetă sus, și în subsolul panoului.
+
+Atenție la Fișiere: descărcările cu același nume se adună ca `ScrollGuard 2.ipa`, și e ușor să
+instalezi din nou fișierul vechi. De aceea alege fișierul cu versiunea în nume.
 
 Limitele unui cont Apple gratuit: cel mult 3 aplicații active (cu tot cu SideStore), 10 App ID-uri
 noi pe săptămână, semnătură de 7 zile (reîmprospătată din SideStore).
 
 ## Folosire
 
-- **Ține apăsat pe marginea de sus** a ecranului (zona ceasului): se deschide panoul ScrollGuard,
-  cu cele trei comutatoare, starea contului și ștergerea datelor.
+- **Ține apăsat pe marginea de sus** a ecranului (zona ceasului), sau atinge eticheta care apare
+  la pornire: se deschide panoul ScrollGuard, cu cele trei comutatoare, starea contului și
+  ștergerea datelor.
 - **Atinge marginea de sus**: derulează la început.
 - **Glisează din marginea stângă**: înapoi.
 

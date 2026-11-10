@@ -111,10 +111,13 @@ jobs:
       - name: Version numbers
         id: version
         run: |
-          VERSION=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\} *$/\1/p' project.yml | head -1)
+          BASE=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\} *$/\1/p' project.yml | head -1)
           # The run number only grows, so every build is newer than the last one. The offset
           # keeps it above the builds of the earlier project installed under the same bundle ID.
           BUILD=$((GITHUB_RUN_NUMBER + 100))
+          # The build number is also the version's last part (1.0.106): SideStore and the app
+          # itself then show which build is installed.
+          VERSION="${BASE%.*}.$BUILD"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "ScrollGuard $VERSION (build $BUILD)"
@@ -162,6 +165,9 @@ jobs:
           # ditto keeps the bundle exactly as built; zip -X leaves out macOS extended attributes.
           ditto "$APP" dist/Payload/ScrollGuard.app
           (cd dist && zip -qry -X ScrollGuard.ipa Payload && rm -rf Payload)
+          # The same file under a name that says which build it is: on the iPhone, downloads of
+          # one name pile up as "ScrollGuard 2.ipa", and the old one is easily installed again.
+          cp dist/ScrollGuard.ipa "dist/ScrollGuard-$VERSION.ipa"
           ls -la dist
 
       - name: Publish the release
@@ -171,7 +177,7 @@ jobs:
           BUILD: ${{ steps.version.outputs.build }}
         run: |
           NOTES="Unsigned IPA for SideStore, built from ${GITHUB_SHA::7}. Open ScrollGuard.ipa on the iPhone and choose SideStore."
-          gh release create "build-$BUILD" dist/ScrollGuard.ipa --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "ScrollGuard $VERSION (build $BUILD)" --notes "$NOTES" --latest
-          echo "### ScrollGuard $VERSION (build $BUILD)" >> "$GITHUB_STEP_SUMMARY"
-          echo "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/ScrollGuard.ipa" >> "$GITHUB_STEP_SUMMARY"
+          gh release create "build-$BUILD" dist/ScrollGuard.ipa "dist/ScrollGuard-$VERSION.ipa" --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "ScrollGuard $VERSION" --notes "$NOTES" --latest
+          echo "### ScrollGuard $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/latest" >> "$GITHUB_STEP_SUMMARY"

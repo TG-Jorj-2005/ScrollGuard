@@ -8,15 +8,15 @@
  * What it does:
  *   1. Hides the Reels entry of the navigation bar and suggested-reels shelves in the feed.
  *   2. Stops taps and in-page navigation that lead to the endless Reels viewer (/reels/).
- *   3. Opens a single clip (/reel/<id>/, /reels/<id>/) as a normal post page (/p/<id>/), which
- *      shows that one clip and nothing to scroll into.
+ *   3. Keeps an opened clip (/reel/<id>/, /reels/<id>/) alone: swiping up or down over it, which
+ *      would bring the next reel, is held back.
  *
  * Never hidden: posts in the feed (<article>), profiles, messages, search, stories.
  */
 (function () {
   'use strict';
 
-  var cfg = __SG_CONFIG__; // { hideReels, blockReelsFeed, clipsAsPosts }
+  var cfg = __SG_CONFIG__; // { hideReels, blockReelsFeed, singleClip }
   var css = __SG_CSS__;
 
   var INSTAGRAM = /(^|\.)instagram\.com$/i;
@@ -24,7 +24,6 @@
   if (window.__scrollGuard) return;
 
   var CLIP_ID = /^[A-Za-z0-9_-]{5,}$/;
-  var BOUNCE_WINDOW_MS = 8000;
 
   function post(message) {
     try {
@@ -60,7 +59,7 @@
    * What a path on instagram.com is, as far as Reels go:
    *   null                      nothing to do
    *   { kind: 'feed' }          the endless Reels viewer
-   *   { kind: 'clip', id }      one clip, which can be shown as the post page /p/<id>/
+   *   { kind: 'clip', id }      one clip, opened from a post, a profile or a conversation
    */
   function classify(pathname) {
     var parts = String(pathname).split('/').filter(Boolean);
@@ -81,32 +80,9 @@
     return CLIP_ID.test(text) && text.toLowerCase() !== 'audio';
   }
 
-  // A clip that Instagram sends straight back from /p/<id>/ to /reel/<id>/ is left alone
-  // afterwards, so the page can never ping-pong. Kept in sessionStorage: it has to survive the
-  // page load that the rewrite itself causes.
-  function readStore(key) {
-    try { return JSON.parse(sessionStorage.getItem(key)) || {}; } catch (e) { return {}; }
-  }
-  function writeStore(key, value) {
-    try { sessionStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private mode */ }
-  }
-  function hasBounced(id) {
-    return readStore('sg-bounced')[id] === 1;
-  }
-  function noteRewrite(id) {
-    var rewrites = readStore('sg-rewrites');
-    rewrites[id] = Date.now();
-    writeStore('sg-rewrites', rewrites);
-  }
-  /** True when this clip was rewritten moments ago and the site has brought us back to it. */
-  function checkBounce(id) {
-    var at = readStore('sg-rewrites')[id];
-    if (!at || Date.now() - at > BOUNCE_WINDOW_MS) return false;
-    var bounced = readStore('sg-bounced');
-    bounced[id] = 1;
-    writeStore('sg-bounced', bounced);
-    post({ t: 'log', text: 'a clip came back from /p/: left as a reel page' });
-    return true;
+  function onClipPage() {
+    var route = classify(location.pathname);
+    return route !== null && route.kind === 'clip';
   }
 
   // ---------------------------------------------------------------- shapes
@@ -215,16 +191,8 @@
   /** Acts on the page we are on now. `via`: load, pushState, replaceState, popstate, poll. */
   function enforce(via) {
     var route = classify(location.pathname);
-    if (!route) return;
-
-    if (route.kind === 'clip') {
-      if (!cfg.clipsAsPosts || hasBounced(route.id) || checkBounce(route.id)) return;
-      noteRewrite(route.id);
-      post({ t: 'rewrite', path: location.pathname, via: via });
-      location.replace('/p/' + route.id + '/');
-      return;
-    }
-
+    // A single clip is allowed to open; the single-clip guard below keeps it alone.
+    if (!route || route.kind !== 'feed') return;
     if (!cfg.blockReelsFeed) return;
     post({ t: 'blocked', path: location.pathname, via: via });
     leaveBlockedPage();
@@ -277,23 +245,70 @@
     try { url = new URL(link.getAttribute('href'), location.href); } catch (e) { return; }
     if (!INSTAGRAM.test(url.hostname)) return;
     var route = classify(url.pathname);
-    if (!route) return;
-
-    if (route.kind === 'clip') {
-      if (!cfg.clipsAsPosts || hasBounced(route.id)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      noteRewrite(route.id);
-      post({ t: 'rewrite', path: url.pathname, via: 'tap' });
-      location.assign('/p/' + route.id + '/');
-      return;
-    }
-
-    if (!cfg.blockReelsFeed) return;
+    if (!route || route.kind !== 'feed' || !cfg.blockReelsFeed) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     post({ t: 'blocked', path: url.pathname, via: 'tap' });
   }, true);
+
+  // ---------------------------------------------------------------- single clip
+
+  // A clip opened from a post, a profile or a conversation fills the screen, and swiping up
+  // brings the next reel, then the next: the endless viewer by another door. While such a clip
+  // is on screen, vertical swipes over it are held back, before the page or the browser sees
+  // them. Taps (pause, like, sound), horizontal swipes (back) and anything inside a sheet
+  // (comments, sharing) work as usual.
+
+  /** True when a video fills most of the screen, around its middle. */
+  function clipFillsScreen() {
+    var height = window.innerHeight;
+    var videos = document.querySelectorAll('video');
+    for (var i = 0; i < videos.length; i++) {
+      var box = videos[i].getBoundingClientRect();
+      if (box.height >= height * 0.6 && box.top < height * 0.5 && box.bottom > height * 0.5) return true;
+    }
+    return false;
+  }
+
+  var swipe = null; // the touch being followed: where it began, whether it was reported
+
+  document.addEventListener('touchstart', function (event) {
+    swipe = null;
+    if (!cfg.singleClip || !event.touches || event.touches.length !== 1 || !onClipPage()) return;
+    var target = event.target;
+    if (target && target.closest && target.closest('[role="dialog"]')) return;
+    if (!clipFillsScreen()) return;
+    swipe = { x: event.touches[0].clientX, y: event.touches[0].clientY, reported: false };
+  }, { capture: true, passive: true });
+
+  function holdBack(event, x, y) {
+    if (!swipe) return;
+    var dx = x - swipe.x;
+    var dy = y - swipe.y;
+    if (Math.abs(dy) <= Math.abs(dx)) return;
+    if (event.cancelable) event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!swipe.reported && Math.abs(dy) > 40) {
+      swipe.reported = true;
+      post({ t: 'held', path: location.pathname });
+    }
+  }
+
+  // passive: false, or the browser would not let the listener stop the scroll.
+  document.addEventListener('touchmove', function (event) {
+    if (!swipe || !event.touches || event.touches.length !== 1) return;
+    holdBack(event, event.touches[0].clientX, event.touches[0].clientY);
+  }, { capture: true, passive: false });
+
+  // The same for a viewer that follows the finger through pointer events.
+  document.addEventListener('pointermove', function (event) {
+    if (!swipe || event.pointerType !== 'touch') return;
+    holdBack(event, event.clientX, event.clientY);
+  }, { capture: true, passive: false });
+
+  ['touchend', 'touchcancel'].forEach(function (name) {
+    document.addEventListener(name, function () { swipe = null; }, { capture: true, passive: true });
+  });
 
   // ---------------------------------------------------------------- hiding
 

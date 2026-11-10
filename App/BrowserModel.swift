@@ -54,8 +54,6 @@ final class BrowserModel: NSObject, ObservableObject {
     private var userAgent = ""
     private var mainFrameStatus = 200
     private var recentBlocks: [Date] = []
-    private var rewrittenClips: [String: Date] = [:]
-    private var bouncedClips = Set<String>()
 
     private static let messageHandlerName = "scrollGuard"
 
@@ -387,27 +385,12 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
 
-        let settings = store.settings
-        switch Routes.classify(url) {
-        case .feed? where settings.blockReelsFeed:
+        // The endless viewer is refused. A single clip loads; the filter keeps it alone.
+        if store.settings.blockReelsFeed, Routes.classify(url) == .feed {
             decisionHandler(.cancel)
             registerBlock(path: Routes.shape(path: url.path), via: "load")
             if webView.url == nil { loadHome() }
             return
-        case .clip(let id)? where settings.clipsAsPosts && !bouncedClips.contains(id):
-            if let rewrittenAt = rewrittenClips[id], Date().timeIntervalSince(rewrittenAt) < 5 {
-                // Instagram sent the post page straight back to the reel page: leave this clip alone.
-                bouncedClips.insert(id)
-                log.add("nav", "a clip came back from /p/: left as a reel page")
-            } else {
-                rewrittenClips[id] = Date()
-                log.add("nav", "clip as post \(url.redacted)")
-                decisionHandler(.cancel)
-                webView.load(URLRequest(url: Routes.postURL(clipID: id)))
-                return
-            }
-        default:
-            break
         }
 
         log.add("nav", "allow \(url.redacted)")
@@ -548,8 +531,12 @@ extension BrowserModel: WKScriptMessageHandler {
             log.add("route", "\(path) (\(via))")
         case "blocked":
             registerBlock(path: path, via: via)
-        case "rewrite":
-            log.add("filter", "clip as post \(path) (\(via))")
+        case "held":
+            // A swipe from an opened clip towards the next reel was held back.
+            blockedCount += 1
+            log.add("block", "swipe held on \(path)")
+            toast = Toast(text: "Other reels are hidden", symbol: "shield.lefthalf.filled")
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
         case "hidden":
             if let count = body["n"] as? Int, count > 0, count < 1000 {
                 hiddenCount += count

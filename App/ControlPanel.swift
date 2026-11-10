@@ -26,9 +26,9 @@ struct ControlPanel: View {
                     FilterToggle(title: "Block the Reels viewer",
                                  detail: "Stops every way into endless scrolling.",
                                  isOn: $store.settings.blockReelsFeed)
-                    FilterToggle(title: "Open clips as posts",
-                                 detail: "A clip opens alone, with nothing to scroll into.",
-                                 isOn: $store.settings.clipsAsPosts)
+                    FilterToggle(title: "One clip at a time",
+                                 detail: "An opened clip stays alone: no swiping on to other reels.",
+                                 isOn: $store.settings.singleClip)
                 } header: {
                     Text("Instagram")
                 } footer: {

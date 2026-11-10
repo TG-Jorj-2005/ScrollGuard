@@ -6,14 +6,14 @@ struct FilterSettings: Equatable {
     var hideReels = true
     /// Stop every way into the endless Reels viewer (/reels/).
     var blockReelsFeed = true
-    /// Open a single clip as a normal post page, which has nothing to scroll into.
-    var clipsAsPosts = true
+    /// Keep an opened clip alone: swiping from it to the next reel is held back.
+    var singleClip = true
 
-    var isProtecting: Bool { hideReels && blockReelsFeed }
+    var isProtecting: Bool { hideReels && blockReelsFeed && singleClip }
 
     /// The same values as the object `instagram.js` reads as its configuration.
     var json: String {
-        "{\"hideReels\":\(hideReels),\"blockReelsFeed\":\(blockReelsFeed),\"clipsAsPosts\":\(clipsAsPosts)}"
+        "{\"hideReels\":\(hideReels),\"blockReelsFeed\":\(blockReelsFeed),\"singleClip\":\(singleClip)}"
     }
 }
 
@@ -25,7 +25,7 @@ final class SettingsStore: ObservableObject {
             guard settings != oldValue else { return }
             defaults.set(settings.hideReels, forKey: Keys.hideReels)
             defaults.set(settings.blockReelsFeed, forKey: Keys.blockReelsFeed)
-            defaults.set(settings.clipsAsPosts, forKey: Keys.clipsAsPosts)
+            defaults.set(settings.singleClip, forKey: Keys.singleClip)
         }
     }
 
@@ -34,7 +34,7 @@ final class SettingsStore: ObservableObject {
     private enum Keys {
         static let hideReels = "hideReels"
         static let blockReelsFeed = "blockReelsFeed"
-        static let clipsAsPosts = "clipsAsPosts"
+        static let singleClip = "singleClip"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -43,6 +43,6 @@ final class SettingsStore: ObservableObject {
         func stored(_ key: String) -> Bool { defaults.object(forKey: key) as? Bool ?? true }
         settings = FilterSettings(hideReels: stored(Keys.hideReels),
                                   blockReelsFeed: stored(Keys.blockReelsFeed),
-                                  clipsAsPosts: stored(Keys.clipsAsPosts))
+                                  singleClip: stored(Keys.singleClip))
     }
 }

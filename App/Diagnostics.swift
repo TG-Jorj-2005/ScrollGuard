@@ -63,7 +63,8 @@ enum DeviceInfo {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
-        return "\(version) (\(build))"
+        // Released builds carry the build number as the version's last part: 1.0.106.
+        return version.hasSuffix(".\(build)") ? version : "\(version) (\(build))"
     }
 
     /// The hardware identifier, e.g. "iPhone15,4" for iPhone 15.

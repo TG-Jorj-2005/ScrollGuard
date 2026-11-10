@@ -12,7 +12,15 @@ const filterSource = fs.readFileSync(path.join(root, 'Web/instagram.js'), 'utf8'
 const css = fs.readFileSync(path.join(root, 'Web/instagram.css'), 'utf8');
 const feedHTML = fs.readFileSync(path.join(__dirname, 'fixtures/feed.html'), 'utf8');
 
-const ALL_ON = { hideReels: true, blockReelsFeed: true, clipsAsPosts: true };
+const ALL_ON = { hideReels: true, blockReelsFeed: true, singleClip: true };
+const ALL_OFF = { hideReels: false, blockReelsFeed: false, singleClip: false };
+
+// A stand-in for the page of one opened clip: a video that fills the screen, and a comments
+// sheet over it.
+const clipHTML = `<!doctype html><html><head></head><body>
+  <div id="viewer"><div id="item"><video id="clip"></video><button id="like">Like</button></div></div>
+  <div id="sheet" role="dialog"><p id="comment">a comment</p></div>
+</body></html>`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Every page a test opened is closed after it, pass or fail: the filter's timers would otherwise
@@ -134,15 +142,86 @@ test('a tap on the Reels tab is stopped and reported; other taps go through', as
   page.close();
 });
 
-test('a tap on a clip is turned into its post page', async () => {
+test('a tap on a clip goes through: a single clip is allowed to open', async () => {
   const page = open();
   await sleep(50);
   const event = tap(page.window, 'clip-link');
-  assert.equal(event.defaultPrevented, true);
-  assert.deepEqual(page.messages.filter((m) => m.t === 'rewrite'), [
-    { t: 'rewrite', path: '/reel/CLIP1234567/', via: 'tap' }
-  ]);
-  page.close();
+  assert.equal(event.defaultPrevented, false);
+  assert.equal(page.messages.filter((m) => m.t === 'blocked').length, 0);
+});
+
+/** Opens the page of one clip, with a video that fills the 768-point-high test screen. */
+function openClip({ url = 'https://www.instagram.com/reel/CLIP1234567/', config = ALL_ON, videoHeight = 700 } = {}) {
+  const page = open({ url, html: clipHTML, config });
+  page.document.getElementById('clip').getBoundingClientRect = () => (
+    { top: 0, left: 0, right: 400, bottom: videoHeight, width: 400, height: videoHeight }
+  );
+  return page;
+}
+
+/** A finger going down on #id and moving by (dx, dy). Returns the move event. */
+function swipe(page, id, dx, dy) {
+  const target = page.document.getElementById(id);
+  const fire = (type, x, y) => {
+    const event = new page.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientX: x, clientY: y }] });
+    target.dispatchEvent(event);
+    return event;
+  };
+  fire('touchstart', 200, 400);
+  const move = fire('touchmove', 200 + dx, 400 + dy);
+  fire('touchend', 0, 0);
+  return move;
+}
+
+/** True when the page's own listener, registered after the filter, got to see the move. */
+function pageSawMove(page, action) {
+  let seen = false;
+  page.document.addEventListener('touchmove', () => { seen = true; }, true);
+  action();
+  return seen;
+}
+
+test('on an opened clip, a swipe up or down is held back and reported once', async () => {
+  for (const dy of [-120, 120]) {
+    const page = openClip();
+    let move;
+    const seen = pageSawMove(page, () => { move = swipe(page, 'clip', 5, dy); });
+    assert.equal(move.defaultPrevented, true, `the scroll is stopped (dy ${dy})`);
+    assert.equal(seen, false, `the page's own swipe handling never sees it (dy ${dy})`);
+    assert.deepEqual(page.messages.filter((m) => m.t === 'held'), [{ t: 'held', path: '/reel/CLIP1234567/' }]);
+  }
+});
+
+test('the same holds for a clip opened at /reels/<id>/, as from a conversation', async () => {
+  const page = openClip({ url: 'https://www.instagram.com/reels/CLIP1234567/' });
+  assert.equal(swipe(page, 'clip', 0, -150).defaultPrevented, true);
+});
+
+test('on an opened clip, taps, horizontal swipes and the comments sheet work as usual', async () => {
+  const page = openClip();
+  assert.equal(tap(page.window, 'like').defaultPrevented, false, 'a tap');
+  assert.equal(swipe(page, 'clip', 150, 10).defaultPrevented, false, 'a horizontal swipe (back)');
+  assert.equal(swipe(page, 'comment', 0, -150).defaultPrevented, false, 'scrolling the comments sheet');
+  assert.equal(page.messages.filter((m) => m.t === 'held').length, 0);
+});
+
+test('swipes are not held back elsewhere: the feed, a post page, a small video', async () => {
+  const feed = openClip({ url: 'https://www.instagram.com/' });
+  assert.equal(swipe(feed, 'clip', 0, -150).defaultPrevented, false, 'the feed scrolls');
+
+  const post = openClip({ url: 'https://www.instagram.com/p/PHOTO12345/' });
+  assert.equal(swipe(post, 'clip', 0, -150).defaultPrevented, false, 'a post page scrolls');
+
+  const small = openClip({ videoHeight: 300 });
+  assert.equal(swipe(small, 'clip', 0, -150).defaultPrevented, false, 'a clip page laid out as a post scrolls');
+});
+
+test('with "one clip at a time" off, an opened clip scrolls on as on the plain site', async () => {
+  const page = openClip({ config: { hideReels: true, blockReelsFeed: true, singleClip: false } });
+  assert.equal(swipe(page, 'clip', 0, -150).defaultPrevented, false);
+  page.window.__scrollGuard.configure(ALL_ON);
+  assert.equal(swipe(page, 'clip', 0, -150).defaultPrevented, true, 'and holds again once switched on');
 });
 
 test('in-page navigation to the Reels viewer is reported and left', async () => {
@@ -168,12 +247,12 @@ test('in-page navigation between normal pages is never blocked', async () => {
     await sleep(20);
     assert.equal(page.window.location.pathname, target);
   }
-  assert.equal(page.messages.filter((m) => m.t === 'blocked' || m.t === 'rewrite').length, 0);
+  assert.equal(page.messages.filter((m) => m.t === 'blocked' || m.t === 'held').length, 0);
   page.close();
 });
 
-test('with every switch off, nothing is hidden, stopped or rewritten', async () => {
-  const page = open({ config: { hideReels: false, blockReelsFeed: false, clipsAsPosts: false } });
+test('with every switch off, nothing is hidden, stopped or held back', async () => {
+  const page = open({ config: ALL_OFF });
   await sleep(250);
   assert.equal(page.document.documentElement.hasAttribute('data-sg-hide'), false);
   assert.equal(tap(page.window, 'reels-tab-link').defaultPrevented, false);
@@ -181,7 +260,7 @@ test('with every switch off, nothing is hidden, stopped or rewritten', async () 
   page.window.history.pushState({}, '', '/reels/');
   await sleep(30);
   assert.equal(page.window.location.pathname, '/reels/');
-  assert.equal(page.messages.filter((m) => m.t === 'blocked' || m.t === 'rewrite' || m.t === 'hidden').length, 0);
+  assert.equal(page.messages.filter((m) => m.t === 'blocked' || m.t === 'held' || m.t === 'hidden').length, 0);
   page.close();
 });
 
@@ -190,7 +269,7 @@ test('turning a switch off and on again updates the page without a reload', asyn
   await sleep(250);
   assert.equal(isHidden(page.document, 'tab-reels'), true);
 
-  page.window.__scrollGuard.configure({ hideReels: false, blockReelsFeed: true, clipsAsPosts: true });
+  page.window.__scrollGuard.configure({ hideReels: false, blockReelsFeed: true, singleClip: true });
   assert.equal(isHidden(page.document, 'tab-reels'), false);
   assert.equal(isHidden(page.document, 'reels-shelf'), false);
 
@@ -200,18 +279,13 @@ test('turning a switch off and on again updates the page without a reload', asyn
   page.close();
 });
 
-test('a clip that the site sends back from /p/ to /reel/ is then left alone (no ping-pong)', async () => {
-  const page = open({ url: 'https://www.instagram.com/p/CLIP1234567/' });
-  await sleep(30);
-  // The filter rewrote this clip a moment ago (recorded before the page load it caused).
-  page.window.sessionStorage.setItem('sg-rewrites', JSON.stringify({ CLIP1234567: Date.now() }));
-  // Instagram's own script now moves the page back to the reel URL.
-  page.window.history.replaceState({}, '', '/reel/CLIP1234567/');
+test('in-page navigation to a single clip is allowed and the page stays on it', async () => {
+  const page = open();
   await sleep(50);
+  page.window.history.pushState({}, '', '/reel/CLIP1234567/');
+  await sleep(100);
   assert.equal(page.window.location.pathname, '/reel/CLIP1234567/');
-  assert.equal(page.messages.filter((m) => m.t === 'rewrite').length, 0);
-  assert.equal(JSON.parse(page.window.sessionStorage.getItem('sg-bounced')).CLIP1234567, 1);
-  page.close();
+  assert.equal(page.messages.filter((m) => m.t === 'blocked').length, 0);
 });
 
 test('a tab that Instagram draws again is hidden in the same turn, before it can be painted', async () => {

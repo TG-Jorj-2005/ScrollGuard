@@ -13,7 +13,6 @@ struct RootView: View {
     @EnvironmentObject private var browser: BrowserModel
     @State private var showPanel = false
     @State private var showHint = false
-    @AppStorage("hasOpenedPanel") private var hasOpenedPanel = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -40,14 +39,20 @@ struct RootView: View {
                         if let toast = browser.toast {
                             Pill(text: toast.text, symbol: toast.symbol)
                                 .transition(.move(edge: .top).combined(with: .opacity))
+                                .allowsHitTesting(false)
                         }
                         if showHint {
-                            Pill(text: "Touch and hold the top edge for ScrollGuard", symbol: "hand.tap")
-                                .transition(.move(edge: .top).combined(with: .opacity))
+                            // Which build this is, for a few seconds after launch. Tapping it
+                            // opens the panel, like touching and holding the top edge.
+                            Button(action: openPanel) {
+                                Pill(text: "ScrollGuard \(DeviceInfo.appVersion) · tap for the panel",
+                                     symbol: "shield.lefthalf.filled")
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.move(edge: .top).combined(with: .opacity))
                         }
                     }
                     .padding(.top, 10)
-                    .allowsHitTesting(false)
                 }
             }
             .ignoresSafeArea(.container, edges: .top)
@@ -76,11 +81,11 @@ struct RootView: View {
             if !Task.isCancelled { browser.toast = nil }
         }
         .task(id: browser.hasShownFirstPage) {
-            // Until the panel was opened once, say how to open it, briefly, after each launch.
-            guard browser.hasShownFirstPage, !hasOpenedPanel else { return }
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            // After each launch, briefly: the build that is running and the way into the panel.
+            guard browser.hasShownFirstPage else { return }
+            try? await Task.sleep(nanoseconds: 800_000_000)
             showHint = true
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
             showHint = false
         }
         .onAppear {
@@ -93,7 +98,6 @@ struct RootView: View {
 
     private func openPanel() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        hasOpenedPanel = true
         showHint = false
         showPanel = true
     }
