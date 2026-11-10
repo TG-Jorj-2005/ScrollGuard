@@ -149,6 +149,8 @@ private struct Pill: View {
                 .foregroundStyle(Color.accentColor)
             Text(text)
                 .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .font(.subheadline.weight(.medium))
         .padding(.horizontal, 16)

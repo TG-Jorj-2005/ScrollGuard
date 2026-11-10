@@ -64,7 +64,12 @@ run() {
   xcrun simctl launch "$UDID" "$BUNDLE_ID" ${@+"$@"}
   sleep "$wait"
   xcrun simctl io "$UDID" screenshot "$OUT/$name.png" > /dev/null 2>&1
-  if xcrun simctl spawn "$UDID" launchctl list | grep -q "$BUNDLE_ID"; then
+  # The list is read whole before it is searched. Piped straight into `grep -q`, grep leaves at
+  # the first match, the listing dies of a broken pipe, and with pipefail that counted as
+  # "not running" although the app had just been found.
+  local services
+  services=$(xcrun simctl spawn "$UDID" launchctl list 2> /dev/null)
+  if grep -q "$BUNDLE_ID" <<< "$services"; then
     echo "state: running"
   else
     echo "::error::$name: the app is not running any more (it crashed or exited)"
@@ -100,6 +105,8 @@ run 2-login 25 -debugStartURL "$LOGIN"
 run 3-login-plain 25 -debugStartURL "$LOGIN" -debugNoFilter YES
 run 4-reels 20 -debugStartURL "https://www.instagram.com/reels/"
 run 5-panel 12 -debugShowPanel YES
+# Right after a start: the label with the build's version is on screen for a few seconds.
+run 6-launch 2
 
 echo "Checks:"
 expect 1-home "[page] commit www.instagram.com" "Instagram loaded in the web view"
