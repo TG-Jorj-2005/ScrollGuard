@@ -11,6 +11,9 @@ enum ReelsRoute: Equatable {
 
 enum Routes {
     static let home = URL(string: "https://www.instagram.com/")!
+    /// Instagram's own sign-in page. Signed out, the app starts here, not on the page whose
+    /// large button only leads to the App Store.
+    static let login = URL(string: "https://www.instagram.com/accounts/login/")!
 
     /// Sites that stay inside the app: Instagram itself, plus the Meta sites its sign-in,
     /// security checks and media go through. Any other site opens in a Safari sheet.

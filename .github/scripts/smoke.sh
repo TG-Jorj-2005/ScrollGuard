@@ -97,18 +97,23 @@ expect() {
   fi
 }
 
+HOME_PAGE="https://www.instagram.com/"
 LOGIN="https://www.instagram.com/accounts/login/"
 
-run 1-home 25
+# Nobody is signed in here, so by itself the app would start on the sign-in page, which
+# Instagram refuses to a data-centre address (429). The start page is named instead.
+run 1-home 25 -debugStartURL "$HOME_PAGE"
 run 2-login 25 -debugStartURL "$LOGIN"
 # The same page with no filter installed at all: if it differs, the filter is at fault.
 run 3-login-plain 25 -debugStartURL "$LOGIN" -debugNoFilter YES
 run 4-reels 20 -debugStartURL "https://www.instagram.com/reels/"
-run 5-panel 12 -debugShowPanel YES
-# Right after a start: the label with the build's version is on screen for a few seconds.
-run 6-launch 2
+run 5-panel 12 -debugStartURL "$HOME_PAGE" -debugShowPanel YES
+# Two seconds after a start: what is on screen while the page is still loading.
+run 6-launch 2 -debugStartURL "$HOME_PAGE"
 # The native bottom bar, forced on although nobody is signed in, to see how it is drawn.
-run 7-bar 12 -debugForceBar YES
+run 7-bar 12 -debugStartURL "$HOME_PAGE" -debugForceBar YES
+# A start with no page named: signed out, the app goes to the sign-in page by itself.
+run 8-signed-out 12
 
 echo "Checks:"
 expect 1-home "[page] commit www.instagram.com" "Instagram loaded in the web view"
@@ -116,7 +121,8 @@ expect 1-home "[nav] allow www.instagram.com" "the navigation rules are consulte
 expect 1-home "[filter] running on" "the filter script runs in the page"
 expect 2-login "[filter] running on /accounts/login" "the filter script runs on the sign-in page"
 expect 4-reels "[block] load /reels" "a direct load of the Reels viewer is refused"
-expect 4-reels "[nav] allow www.instagram.com/" "after the refusal the feed is opened instead"
+expect 4-reels "[nav] allow www.instagram.com/" "after the refusal another page is opened instead"
+expect 8-signed-out "[nav] allow www.instagram.com/accounts/login/" "signed out, the app starts on the sign-in page"
 
 # Crash reports written by the simulator during this run, if any.
 find ~/Library/Logs/DiagnosticReports -name 'ScrollGuard*' -newer "$OUT/build-sim.log" -print0 2> /dev/null |

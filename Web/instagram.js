@@ -491,11 +491,59 @@
     if (cfg.nativeBar) root.setAttribute('data-sg-native-bar', '');
     else root.removeAttribute('data-sg-native-bar');
 
-    var report = JSON.stringify([barElement !== null, profilePath]);
+    // Instagram's bar shows how many conversations are unread; the native bar shows the same.
+    // The bar is not in every page (the messages screen has none): the last count is kept.
+    if (barElement) unreadMessages = unreadCount(barElement.querySelector('a[href="/direct/inbox/"]'));
+
+    var report = JSON.stringify([barElement !== null, profilePath, unreadMessages]);
     if (report !== lastBarReport) {
       lastBarReport = report;
-      post({ t: 'bar', present: barElement !== null, profile: profilePath });
+      post({ t: 'bar', present: barElement !== null, profile: profilePath, unread: unreadMessages });
     }
+  }
+
+  var unreadMessages = 0;
+  var inboxLinkDescribed = false;
+
+  /** The number Instagram shows on its messages button, read from the link's text and label. */
+  function unreadCount(link) {
+    if (!link) return 0;
+    var label = link.getAttribute('aria-label') || '';
+    var text = link.textContent || '';
+    var match = /\d{1,3}/.exec(text) || /\d{1,3}/.exec(label);
+    var count = match ? parseInt(match[0], 10) : 0;
+    // Once, for the log: where the number came from. The label is Instagram's own wording for
+    // the button, not anyone's content.
+    if (!inboxLinkDescribed && (count > 0 || label)) {
+      inboxLinkDescribed = true;
+      post({ t: 'log', text: 'messages button: label "' + label.slice(0, 70) + '", digits in text: ' + (/\d/.test(text) ? 'yes' : 'no') + ', count ' + count });
+    }
+    return count;
+  }
+
+  /**
+   * Changes page in place where there is no link to click: writes the address and tells
+   * Instagram's router that the history moved, as going back does. Whether that worked shows
+   * in the page: every main page has Instagram's bar. If it has not appeared, the page is
+   * loaded the plain way.
+   */
+  function softNavigate(path) {
+    try {
+      history.pushState(null, '', path);
+      window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    } catch (e) {
+      location.assign(path);
+      return;
+    }
+    setTimeout(function () {
+      barElement = null;
+      if (location.pathname === path && findBar()) {
+        post({ t: 'log', text: 'in-place change of page worked' });
+        return;
+      }
+      post({ t: 'log', text: 'in-place change of page did not draw: loading the page' });
+      location.replace(path);
+    }, 1300);
   }
 
   /** Goes back through this page's history to the nearest earlier visit of `path`, if any. */
@@ -536,10 +584,11 @@
     if (!link) link = document.querySelector(selector);
     if (!link) {
       // No link to it on this page (the messages screen has none). If the page was visited on
-      // the way here, go back to it, which Instagram does in place; otherwise load it.
+      // the way here, go back to it, which Instagram does in place. Otherwise try to change
+      // page in place anyway, and load it if that does not work.
       if (goBackTo(path)) return 'back';
-      location.assign(path);
-      return 'load';
+      softNavigate(path);
+      return 'soft';
     }
     link.click();
     // If the click changed nothing (a link that was only decoration), load the page.
@@ -549,9 +598,20 @@
     return 'click';
   }
 
+  // The app covers the page until there is something to see in it: the first post of the feed,
+  // or the fields of the sign-in page. Told once per page load.
+  var drawnReported = false;
+  function reportDrawn() {
+    if (drawnReported || !document.body) return;
+    if (!document.querySelector('article, input')) return;
+    drawnReported = true;
+    post({ t: 'drawn', path: location.pathname });
+  }
+
   function scan() {
     var root = document.documentElement;
     if (!root) return;
+    reportDrawn();
     watchBar();
     if (!cfg.hideReels) {
       root.removeAttribute('data-sg-hide');
@@ -601,6 +661,7 @@
 
   /** The solid background colour under a point, as [r, g, b], or null. */
   function colourAt(x, y) {
+    if (typeof document.elementFromPoint !== 'function') return null;
     for (var element = document.elementFromPoint(x, y); element; element = element.parentElement) {
       var match = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(getComputedStyle(element).backgroundColor);
       if (match && (match[4] === undefined || parseFloat(match[4]) > 0.9)) {

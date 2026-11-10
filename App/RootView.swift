@@ -31,7 +31,7 @@ struct RootView: View {
                             .transition(.opacity)
                     }
                     if !browser.hasShownFirstPage {
-                        LaunchCover()
+                        LaunchCover(image: browser.launchImage)
                             .transition(.opacity)
                     }
 
@@ -58,7 +58,8 @@ struct RootView: View {
                 }
 
                 if browser.showsNativeBar {
-                    NativeBar(active: browser.activeTab, color: Color(uiColor: browser.bottomEdgeColor)) { tab in
+                    NativeBar(active: browser.activeTab, unread: browser.unreadMessages,
+                              color: Color(uiColor: browser.bottomEdgeColor)) { tab in
                         browser.select(tab)
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -91,8 +92,9 @@ struct RootView: View {
             if !Task.isCancelled { browser.toast = nil }
         }
         .task(id: browser.hasShownFirstPage) {
-            // After each launch, briefly: the build that is running and the way into the panel.
-            guard browser.hasShownFirstPage else { return }
+            // On the first start after an update, briefly: which version this is, and the way
+            // into the panel.
+            guard browser.hasShownFirstPage, browser.showsVersionLabel else { return }
             try? await Task.sleep(nanoseconds: 800_000_000)
             showHint = true
             try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -134,6 +136,8 @@ private struct StatusStrip: View {
 /// the page changes, and its buttons answer at once.
 private struct NativeBar: View {
     let active: BrowserModel.Tab?
+    /// Unread conversations, as Instagram's own button counts them.
+    let unread: Int
     let color: Color
     let select: (BrowserModel.Tab) -> Void
 
@@ -146,6 +150,18 @@ private struct NativeBar: View {
                     Image(systemName: symbol(for: tab))
                         .font(.system(size: 23, weight: tab == active ? .semibold : .regular))
                         .contentTransition(.symbolEffect(.replace))
+                        .overlay(alignment: .topTrailing) {
+                            if tab == .messages, unread > 0 {
+                                Text(unread > 9 ? "9+" : "\(unread)")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 5)
+                                    .frame(minWidth: 17, minHeight: 17)
+                                    .background(Color.red, in: Capsule())
+                                    .offset(x: 10, y: -6)
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+                        }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .contentShape(Rectangle())
                 }
@@ -225,18 +241,30 @@ private struct Pill: View {
     }
 }
 
-/// Covers the empty web view from launch until the first page is on screen.
+/// Covers the web view from launch until the first page has something to show. With a picture
+/// of the feed from last time, the app opens on its content at once and the live page fades in
+/// over it; without one (first run, signed out) it shows the mark.
 private struct LaunchCover: View {
+    let image: UIImage?
     @State private var pulse = false
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             Color.black
-            Image(systemName: "shield.lefthalf.filled")
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(Color.accentColor)
-                .opacity(pulse ? 1 : 0.35)
-                .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .clipped()
+            } else {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.system(size: 44, weight: .light))
+                    .foregroundStyle(Color.accentColor)
+                    .opacity(pulse ? 1 : 0.35)
+                    .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .onAppear { pulse = true }
     }

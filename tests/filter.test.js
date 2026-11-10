@@ -381,7 +381,7 @@ test('native bar: Instagram\'s bottom bar is found, reported and hidden only whi
   const off = openWithBar(ALL_ON);
   await sleep(250);
   assert.equal(off.document.documentElement.hasAttribute('data-sg-native-bar'), false, 'off: the page keeps its bar');
-  assert.deepEqual(off.messages.filter((m) => m.t === 'bar'), [{ t: 'bar', present: true, profile: '/me/' }]);
+  assert.deepEqual(off.messages.filter((m) => m.t === 'bar'), [{ t: 'bar', present: true, profile: '/me/', unread: 0 }]);
 
   const on = openWithBar({ ...ALL_ON, nativeBar: true });
   await sleep(250);
@@ -403,7 +403,7 @@ test('native bar: a fixed element that is not at the bottom is not taken for the
   );
   await sleep(250);
   assert.equal(page.document.querySelector('[data-sg-bar]'), null);
-  assert.deepEqual(page.messages.filter((m) => m.t === 'bar'), [{ t: 'bar', present: false, profile: null }]);
+  assert.deepEqual(page.messages.filter((m) => m.t === 'bar'), [{ t: 'bar', present: false, profile: null, unread: 0 }]);
 });
 
 test('native bar: a native button clicks Instagram\'s own link, so the page changes in place', async () => {
@@ -442,6 +442,60 @@ test('native bar: with no link on the page, it goes back to an earlier visit ins
   assert.equal(page.window.__scrollGuard.go('home'), 'back');
   await sleep(150);
   assert.equal(page.window.location.pathname, '/');
+});
+
+test('native bar: with no link and no earlier visit, the page is changed in place if Instagram answers', async () => {
+  const page = openWithBar({ ...ALL_ON, nativeBar: true });
+  await sleep(250);
+  page.window.history.replaceState({}, '', '/direct/inbox/');
+  const bar = page.document.getElementById('bottom-bar');
+  const parent = bar.parentNode;
+  bar.remove();
+  // Instagram's router: when told the history moved, it draws the page for the address.
+  page.window.addEventListener('popstate', () => { parent.appendChild(bar); });
+
+  assert.equal(page.window.__scrollGuard.go('profile'), 'soft');
+  assert.equal(page.window.location.pathname, '/me/');
+  await sleep(1500);
+  assert.equal(page.window.location.pathname, '/me/');
+  assert.deepEqual(page.messages.filter((m) => m.t === 'log').map((m) => m.text), ['in-place change of page worked']);
+});
+
+test('native bar: when the in-place change draws nothing, the page is loaded the plain way', async () => {
+  const page = openWithBar({ ...ALL_ON, nativeBar: true });
+  await sleep(250);
+  page.window.history.replaceState({}, '', '/direct/inbox/');
+  page.document.getElementById('bottom-bar').remove();
+  // Nothing answers the history event: the messages screen stays as it is.
+
+  assert.equal(page.window.__scrollGuard.go('profile'), 'soft');
+  await sleep(1500);
+  assert.deepEqual(page.messages.filter((m) => m.t === 'log').map((m) => m.text),
+    ['in-place change of page did not draw: loading the page']);
+});
+
+test('native bar: the number on Instagram\'s messages button is passed on', async () => {
+  const page = openWithBar({ ...ALL_ON, nativeBar: true });
+  await sleep(250);
+  assert.equal(page.messages.filter((m) => m.t === 'bar').pop().unread, 0);
+
+  const badge = page.document.createElement('span');
+  badge.textContent = '3';
+  page.document.getElementById('messages-link').appendChild(badge);
+  await sleep(50);
+  assert.equal(page.messages.filter((m) => m.t === 'bar').pop().unread, 3);
+  assert.equal(page.messages.filter((m) => m.t === 'bar').pop().profile, '/me/');
+});
+
+test('the app is told once when the page has something to show', async () => {
+  const empty = open({ html: '<!doctype html><html><head></head><body><div id="root"></div></body></html>' });
+  await sleep(250);
+  assert.equal(empty.messages.filter((m) => m.t === 'drawn').length, 0, 'an empty shell is not a drawn page');
+  empty.document.getElementById('root').innerHTML = '<article>first post</article>';
+  await sleep(50);
+  empty.document.getElementById('root').innerHTML += '<article>second post</article>';
+  await sleep(50);
+  assert.deepEqual(empty.messages.filter((m) => m.t === 'drawn'), [{ t: 'drawn', path: '/' }]);
 });
 
 test('a clip linked under its author\'s name is a clip too, and its swipes are held back', async () => {

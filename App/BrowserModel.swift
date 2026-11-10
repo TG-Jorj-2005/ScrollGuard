@@ -52,6 +52,13 @@ final class BrowserModel: NSObject, ObservableObject {
     /// True once the filter has found Instagram's own bottom bar, on this or an earlier run.
     /// Until then the native bar stays away, so there are never two bars.
     @Published private(set) var barDetected: Bool
+    /// The number Instagram shows on its own messages button, for the badge on the native one.
+    @Published private(set) var unreadMessages = 0
+    /// A picture of the feed as it last looked. Shown at launch until the live page is drawn,
+    /// so the app opens on its content instead of an empty screen. Stays on the phone.
+    @Published private(set) var launchImage: UIImage?
+    /// True on the first start after an update: the version label is shown for a moment.
+    @Published private(set) var showsVersionLabel = false
 
     /// The buttons of the native bar: the destinations of Instagram's own bar, without Reels.
     enum Tab: String, CaseIterable {
@@ -77,6 +84,9 @@ final class BrowserModel: NSObject, ObservableObject {
     private static let messageHandlerName = "scrollGuard"
     private static let signedInKey = "wasSignedIn"
     private static let barDetectedKey = "barDetected"
+    private static let edgeColorsKey = "launchEdgeColors"
+    private static let launchImageURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("launch-feed.jpg")
 
     init(store: SettingsStore) {
         self.store = store
@@ -96,6 +106,17 @@ final class BrowserModel: NSObject, ObservableObject {
 
         // Likewise remembered from the last run, and checked again in start().
         isSignedIn = UserDefaults.standard.object(forKey: Self.signedInKey) as? Bool
+        // The feed as it last looked, and the colours of its edges, for the launch.
+        if isSignedIn == true {
+            launchImage = UIImage(contentsOfFile: Self.launchImageURL.path)
+            if launchImage != nil, let saved = UserDefaults.standard.array(forKey: Self.edgeColorsKey), saved.count == 6 {
+                topEdgeColor = Self.edgeColor(Array(saved[0..<3]))
+                bottomEdgeColor = Self.edgeColor(Array(saved[3..<6]))
+            }
+        }
+        NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+            .sink { [weak self] _ in self?.captureLaunchImage() }
+            .store(in: &subscriptions)
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -220,20 +241,78 @@ final class BrowserModel: NSObject, ObservableObject {
         defaults.set(launches, forKey: "launchCount")
         defaults.set(DeviceInfo.appVersion, forKey: "lastVersion")
         log.add("app", "start \(launches) of this install, version before: \(previousVersion)")
-        refreshSignInState()
+        showsVersionLabel = previousVersion != DeviceInfo.appVersion
+
         // For the simulator check in GitHub Actions (.github/scripts/smoke.sh): start on a given
         // page, passed as a launch argument. Never set on the phone.
         if let text = UserDefaults.standard.string(forKey: "debugStartURL"), let url = URL(string: text) {
             log.add("app", "debug start page \(url.redacted)")
             webView.load(URLRequest(url: url))
-        } else {
-            loadHome()
+            refreshSignInState()
+            return
+        }
+        // The cookies first, then the page: the feed when signed in, the sign-in page when not.
+        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+            let signedIn = cookies.contains { cookie in
+                cookie.name == "sessionid" && cookie.domain.hasSuffix("instagram.com") && !cookie.value.isEmpty
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.setSignedIn(signedIn)
+                self.loadHome()
+            }
         }
     }
 
+    /// The feed, or Instagram's sign-in page when nobody is signed in.
     func loadHome() {
         failure = nil
-        webView.load(URLRequest(url: Routes.home))
+        webView.load(URLRequest(url: isSignedIn == false ? Routes.login : Routes.home))
+    }
+
+    // MARK: - Launch image
+
+    /// Keeps a picture of the top of the feed for the next launch. Only the feed, only at its
+    /// top, only while signed in: that is what the next launch will open on.
+    private func captureLaunchImage() {
+        guard isSignedIn == true, isOnInstagram, currentPath == "/", failure == nil, hasShownFirstPage,
+              webView.bounds.width > 0, webView.scrollView.contentOffset.y < 80 else { return }
+        let colors = [topEdgeColor, bottomEdgeColor].flatMap { color -> [Double] in
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            _ = color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+            return [Double(red) * 255, Double(green) * 255, Double(blue) * 255]
+        }
+        let file = Self.launchImageURL
+        let colorsKey = Self.edgeColorsKey
+        webView.takeSnapshot(with: nil) { image, _ in
+            guard let data = image?.jpegData(compressionQuality: 0.72) else { return }
+            try? data.write(to: file, options: .atomic)
+            UserDefaults.standard.set(colors, forKey: colorsKey)
+        }
+    }
+
+    private func forgetLaunchImage() {
+        launchImage = nil
+        try? FileManager.default.removeItem(at: Self.launchImageURL)
+        UserDefaults.standard.removeObject(forKey: Self.edgeColorsKey)
+    }
+
+    /// Takes the launch cover away. The page says when it has something to show; a page that
+    /// never says so is shown after a few seconds anyway.
+    private func revealPage() {
+        if !hasShownFirstPage { hasShownFirstPage = true }
+    }
+
+    /// Pulling down reloads the page only where the page itself scrolls. In a conversation, a
+    /// story or an opened clip the page stands still and something inside it scrolls: there a
+    /// pull is just scrolling up, and must not reload anything.
+    private var allowsPullToRefresh: Bool {
+        guard isOnInstagram else { return true }
+        let parts = currentPath.split(separator: "/").map { $0.lowercased() }
+        guard let head = parts.first else { return true }
+        if ["direct", "stories", "accounts", "challenge", "reel", "reels"].contains(head) { return false }
+        if parts.count >= 2, parts[1] == "reel" { return false }
+        return true
     }
 
     func reload() {
@@ -260,6 +339,10 @@ final class BrowserModel: NSObject, ObservableObject {
         isSignedIn = signedIn
         UserDefaults.standard.set(signedIn, forKey: Self.signedInKey)
         log.add("app", "instagram session cookie: \(signedIn ? "present" : "absent")")
+        if !signedIn {
+            forgetLaunchImage()
+            unreadMessages = 0
+        }
         // Signing in or out switches between the native bar and Instagram's own.
         applyFilterConfig()
     }
@@ -418,6 +501,8 @@ final class BrowserModel: NSObject, ObservableObject {
         if path != currentPath { currentPath = path }
         let onInstagram = Routes.isInstagram(url)
         if onInstagram != isOnInstagram { isOnInstagram = onInstagram }
+        let wanted = allowsPullToRefresh ? refreshControl : nil
+        if webView.scrollView.refreshControl !== wanted { webView.scrollView.refreshControl = wanted }
 
         guard store.settings.blockReelsFeed, Routes.classify(url) == .feed else { return }
         Task { [weak self] in
@@ -509,6 +594,18 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
 
+        // "Open Instagram" and "Get the app" lead to the Instagram app or the App Store. Here
+        // they lead nowhere useful: signed out, the sign-in page is what was wanted.
+        let host = url.host?.lowercased() ?? ""
+        if host == "applink.instagram.com" || host == "apps.apple.com" || host == "itunes.apple.com" {
+            log.add("nav", "ignored a link to the Instagram app")
+            decisionHandler(.cancel)
+            if isSignedIn != true, webView.url?.path.hasPrefix("/accounts") != true {
+                webView.load(URLRequest(url: Routes.login))
+            }
+            return
+        }
+
         guard Routes.isFamily(url) else {
             log.add("nav", "external \(url.redacted)")
             decisionHandler(.cancel)
@@ -544,7 +641,12 @@ extension BrowserModel: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         failure = nil
-        hasShownFirstPage = true
+        // The launch cover stays until the page reports something to show ("drawn"); this is
+        // the limit for a page that never does.
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            self?.revealPage()
+        }
         // Off Instagram (a sign-in step on facebook.com) the filter does not run: plain black.
         if let url = webView.url, !Routes.isInstagram(url) {
             topEdgeColor = .black
@@ -563,7 +665,9 @@ extension BrowserModel: WKNavigationDelegate {
             webView.evaluateJavaScript("document.body ? document.body.children.length : 0") { [weak self] value, _ in
                 let isEmpty = (value as? NSNumber)?.intValue ?? 0 == 0
                 Task { @MainActor [weak self] in
-                    if isEmpty { self?.failure = .http(status) }
+                    guard isEmpty, let self else { return }
+                    self.failure = .http(status)
+                    self.revealPage()
                 }
             }
         }
@@ -682,6 +786,19 @@ extension BrowserModel: WKScriptMessageHandler {
                 barDetected = true
                 UserDefaults.standard.set(true, forKey: Self.barDetectedKey)
                 log.add("bar", "Instagram's bar found: the native bar takes its place")
+            }
+            if let unread = (body["unread"] as? NSNumber)?.intValue, unread >= 0, unread < 1000, unread != unreadMessages {
+                unreadMessages = unread
+                log.add("bar", "unread on the messages button: \(unread)")
+            }
+        case "drawn":
+            revealPage()
+            // A moment later the feed has its pictures: keep how it looks for the next launch.
+            if path == "/" {
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                    self?.captureLaunchImage()
+                }
             }
         case "transition":
             if (body["kind"] as? String) == "push" { animatePush() }
