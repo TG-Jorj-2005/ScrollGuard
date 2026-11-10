@@ -32,6 +32,23 @@
     } catch (e) { /* not inside the app (tests, a desktop browser) */ }
   }
 
+  // The page's first script errors and failed resources go to the app's diagnostics log: with
+  // no Mac there is no Web Inspector, and "the page is blank" needs a reason.
+  var reportedErrors = 0;
+  window.addEventListener('error', function (event) {
+    if (reportedErrors >= 8) return;
+    reportedErrors++;
+    var target = event.target;
+    var what;
+    if (target && target !== window && (target.src || target.href)) {
+      what = 'failed to load ' + String(target.src || target.href).split('?')[0].slice(-90);
+    } else {
+      var file = event.filename ? ' @ ' + String(event.filename).split('?')[0].slice(-60) + ':' + event.lineno : '';
+      what = 'script error: ' + String(event.message || 'unknown').slice(0, 140) + file;
+    }
+    post({ t: 'log', text: what });
+  }, true);
+
   // ---------------------------------------------------------------- routes
 
   /**
