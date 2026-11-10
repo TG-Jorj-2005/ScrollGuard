@@ -336,6 +336,95 @@ test('diagnostics: addresses are reduced to shapes, with no names or ids', async
   }
 });
 
+/** The feed fixture as a phone lays it out: the bottom bar is 50 points high at the bottom. */
+function openWithBar(config) {
+  const page = open({ config });
+  page.document.getElementById('bottom-bar').getBoundingClientRect = () => (
+    { top: 718, left: 0, right: 393, bottom: 768, width: 393, height: 50 }
+  );
+  return page;
+}
+
+test('native bar: Instagram\'s bottom bar is found, reported and hidden only while the native bar is on', async () => {
+  const off = openWithBar(ALL_ON);
+  await sleep(250);
+  assert.equal(off.document.documentElement.hasAttribute('data-sg-native-bar'), false, 'off: the page keeps its bar');
+  assert.deepEqual(off.messages.filter((m) => m.t === 'bar'), [{ t: 'bar', present: true, profile: '/me/' }]);
+
+  const on = openWithBar({ ...ALL_ON, nativeBar: true });
+  await sleep(250);
+  assert.equal(on.document.getElementById('bottom-bar').hasAttribute('data-sg-bar'), true);
+  assert.equal(on.document.documentElement.hasAttribute('data-sg-native-bar'), true);
+  for (const id of ['feed', 'photo-post', 'reels-shelf']) {
+    assert.equal(on.document.getElementById(id).closest('[data-sg-bar]'), null, `${id} is not part of the bar`);
+  }
+
+  on.window.__scrollGuard.configure(ALL_ON);
+  assert.equal(on.document.documentElement.hasAttribute('data-sg-native-bar'), false, 'switched off: the page\'s bar is back');
+});
+
+test('native bar: a fixed element that is not at the bottom is not taken for the bar', async () => {
+  const page = open({ config: { ...ALL_ON, nativeBar: true } });
+  // The same links in an element at the top of the screen (a header or a side menu).
+  page.document.getElementById('bottom-bar').getBoundingClientRect = () => (
+    { top: 0, left: 0, right: 393, bottom: 50, width: 393, height: 50 }
+  );
+  await sleep(250);
+  assert.equal(page.document.querySelector('[data-sg-bar]'), null);
+  assert.deepEqual(page.messages.filter((m) => m.t === 'bar'), [{ t: 'bar', present: false, profile: null }]);
+});
+
+test('native bar: a native button clicks Instagram\'s own link, so the page changes in place', async () => {
+  const page = openWithBar({ ...ALL_ON, nativeBar: true });
+  await sleep(250);
+  const clicked = [];
+  page.document.addEventListener('click', (event) => {
+    const link = event.target.closest('a');
+    clicked.push(link.getAttribute('href'));
+    event.preventDefault(); // as Instagram's router does: it changes the page itself
+    page.window.history.pushState({}, '', link.getAttribute('href'));
+  });
+  const go = page.window.__scrollGuard.go;
+
+  assert.equal(go('search'), 'click');
+  assert.equal(page.window.location.pathname, '/explore/');
+  assert.equal(go('messages'), 'click');
+  assert.equal(go('profile'), 'click');
+  assert.equal(page.window.location.pathname, '/me/');
+  assert.equal(go('profile'), 'already');
+  assert.equal(go('home'), 'click');
+  assert.deepEqual(clicked, ['/explore/', '/direct/inbox/', '/me/', '/']);
+  assert.equal(go('reels'), 'unknown', 'there is no button for Reels');
+});
+
+test('a clip linked under its author\'s name is a clip too, and its swipes are held back', async () => {
+  const classify = open().window.__scrollGuard.classify;
+  assert.deepEqual(plain(classify('/alice/reel/CLIP1234567/')), { kind: 'clip', id: 'CLIP1234567' });
+  assert.equal(classify('/alice/p/PHOTO12345/'), null);
+  assert.equal(classify('/alice/reels/'), null);
+
+  const page = openClip({ url: 'https://www.instagram.com/alice/reel/CLIP1234567/' });
+  assert.equal(swipe(page, 'clip', 0, -150).defaultPrevented, true);
+});
+
+test('opening a page on top of another is announced for the app to animate; stories and going back are not', async () => {
+  const page = open();
+  await sleep(50);
+  const transitions = () => page.messages.filter((m) => m.t === 'transition').length;
+
+  page.window.history.pushState({}, '', '/alice/');
+  assert.equal(transitions(), 1, 'a profile opened from the feed');
+  page.window.history.pushState({}, '', '/stories/alice/123/');
+  assert.equal(transitions(), 1, 'Instagram animates stories itself');
+  page.window.history.replaceState({}, '', '/stories/alice/456/');
+  assert.equal(transitions(), 1, 'the next story replaces the address, it is not a new page');
+  page.window.history.pushState({}, '', '/stories/alice/456/');
+  assert.equal(transitions(), 1, 'the same page again');
+  page.window.history.back();
+  await sleep(100);
+  assert.equal(transitions(), 1, 'going back');
+});
+
 test('the filter does nothing on other sites (sign-in passes through facebook.com)', async () => {
   const page = open({ url: 'https://www.facebook.com/reels/' });
   await sleep(100);

@@ -34,7 +34,7 @@ final class BrowserModel: NSObject, ObservableObject {
     /// False until the first page is on screen: the launch cover hides the empty web view.
     @Published private(set) var hasShownFirstPage = false
     @Published private(set) var failure: Failure?
-    /// nil until the cookies were looked at once.
+    /// nil until the cookies were looked at once (on this or an earlier run).
     @Published private(set) var isSignedIn: Bool?
     @Published private(set) var hiddenCount = 0
     @Published private(set) var blockedCount = 0
@@ -45,6 +45,18 @@ final class BrowserModel: NSObject, ObservableObject {
     /// the status bar and the home indicator take them, so they join the page without a seam.
     @Published private(set) var topEdgeColor: UIColor = .black
     @Published private(set) var bottomEdgeColor: UIColor = .black
+    /// The path of the page on screen, kept up to date through in-page navigation too. It
+    /// decides whether the native bar shows and which of its buttons is lit. Never logged.
+    @Published private(set) var currentPath = "/"
+    @Published private(set) var isOnInstagram = true
+    /// True once the filter has found Instagram's own bottom bar, on this or an earlier run.
+    /// Until then the native bar stays away, so there are never two bars.
+    @Published private(set) var barDetected: Bool
+
+    /// The buttons of the native bar: the destinations of Instagram's own bar, without Reels.
+    enum Tab: String, CaseIterable {
+        case home, search, messages, profile
+    }
 
     private let store: SettingsStore
     private let log = DiagnosticsLog.shared
@@ -54,11 +66,23 @@ final class BrowserModel: NSObject, ObservableObject {
     private var userAgent = ""
     private var mainFrameStatus = 200
     private var recentBlocks: [Date] = []
+    /// The signed-in account's own page, e.g. "/name/", read by the filter from Instagram's bar.
+    /// Needed for the Profile button. Kept in memory only, never logged.
+    private var profilePath: String?
+    private var lastTransition = Date.distantPast
+    private var transitionsPausedUntil = Date.distantPast
+    /// For the simulator check only: show the native bar although nobody is signed in.
+    private let forceBar = UserDefaults.standard.bool(forKey: "debugForceBar")
 
     private static let messageHandlerName = "scrollGuard"
+    private static let signedInKey = "wasSignedIn"
+    private static let barDetectedKey = "barDetected"
 
     init(store: SettingsStore) {
         self.store = store
+        // What was true when the app last ran, so the first page already gets the right bar.
+        // It is checked again as soon as the page is there.
+        barDetected = UserDefaults.standard.bool(forKey: Self.barDetectedKey)
 
         let configuration = WKWebViewConfiguration()
         // The persistent store: cookies and site data stay between launches, as in Safari.
@@ -69,6 +93,9 @@ final class BrowserModel: NSObject, ObservableObject {
         // The User-Agent is left exactly as WebKit sets it.
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
+
+        // Likewise remembered from the last run, and checked again in start().
+        isSignedIn = UserDefaults.standard.object(forKey: Self.signedInKey) as? Bool
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -96,8 +123,83 @@ final class BrowserModel: NSObject, ObservableObject {
             .dropFirst()
             .removeDuplicates()
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.settingsChanged() }
+            .sink { [weak self] _ in self?.applyFilterConfig() }
             .store(in: &subscriptions)
+    }
+
+    // MARK: - Native bar
+
+    /// The native bar replaces Instagram's own while it is switched on and someone is signed in.
+    private var nativeBarActive: Bool {
+        forceBar || (store.settings.nativeBar && isSignedIn == true)
+    }
+
+    /// Whether the native bar is on screen now. Like in a native app, it steps aside where the
+    /// whole screen belongs to one thing: a story, a conversation, signing in.
+    var showsNativeBar: Bool {
+        if forceBar { return true }
+        guard nativeBarActive, barDetected, failure == nil, isOnInstagram else { return false }
+        let parts = currentPath.split(separator: "/").map { $0.lowercased() }
+        guard let head = parts.first else { return true }
+        if head == "stories" || head == "accounts" || head == "challenge" { return false }
+        if head == "direct", parts.count >= 2, parts[1] == "t" { return false }
+        return true
+    }
+
+    var activeTab: Tab? {
+        if currentPath == "/" { return .home }
+        if currentPath.hasPrefix("/explore") { return .search }
+        if currentPath.hasPrefix("/direct") { return .messages }
+        if let profilePath, currentPath.hasPrefix(profilePath) { return .profile }
+        return nil
+    }
+
+    /// A button of the native bar was tapped.
+    func select(_ tab: Tab) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        if activeTab == tab {
+            scrollToTop()
+            return
+        }
+        // Changing tab is instant in a native app too: no slide for this page change.
+        transitionsPausedUntil = Date().addingTimeInterval(0.8)
+        let script = "window.__scrollGuard ? window.__scrollGuard.go('\(tab.rawValue)') : 'no filter'"
+        webView.evaluateJavaScript(script) { [weak self] value, _ in
+            let result = value as? String ?? "failed"
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.log.add("bar", "\(tab.rawValue): \(result)")
+                // The filter could not do it (it is not running on this page): load the page.
+                if result != "click" && result != "load" && result != "already" { self.load(tab) }
+            }
+        }
+    }
+
+    private func load(_ tab: Tab) {
+        let path: String?
+        switch tab {
+        case .home: path = "/"
+        case .search: path = "/explore/"
+        case .messages: path = "/direct/inbox/"
+        case .profile: path = profilePath
+        }
+        guard let path, let url = URL(string: path, relativeTo: Routes.home) else { return }
+        webView.load(URLRequest(url: url))
+    }
+
+    /// A page is opening on top of the current one: let it arrive with a short slide, instead of
+    /// replacing the old one in a single frame.
+    private func animatePush() {
+        let now = Date()
+        guard store.settings.pageTransitions, !UIAccessibility.isReduceMotionEnabled,
+              now > transitionsPausedUntil, now.timeIntervalSince(lastTransition) > 0.35 else { return }
+        lastTransition = now
+        webView.alpha = 0.25
+        webView.transform = CGAffineTransform(translationX: 28, y: 0)
+        UIView.animate(withDuration: 0.32, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState]) {
+            self.webView.alpha = 1
+            self.webView.transform = .identity
+        }
     }
 
     // MARK: - Commands from the views
@@ -107,7 +209,8 @@ final class BrowserModel: NSObject, ObservableObject {
         guard !started else { return }
         started = true
         log.add("app", "ScrollGuard \(DeviceInfo.appVersion), \(DeviceInfo.system), \(DeviceInfo.model)")
-        log.add("app", "settings \(store.settings.json)")
+        log.add("app", "settings \(store.settings.summary)")
+        refreshSignInState()
         // For the simulator check in GitHub Actions (.github/scripts/smoke.sh): start on a given
         // page, passed as a launch argument. Never set on the phone.
         if let text = UserDefaults.standard.string(forKey: "debugStartURL"), let url = URL(string: text) {
@@ -138,8 +241,17 @@ final class BrowserModel: NSObject, ObservableObject {
         await WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
                                                       modifiedSince: .distantPast)
         log.add("app", "browsing data cleared")
-        isSignedIn = false
+        setSignedIn(false)
         loadHome()
+    }
+
+    private func setSignedIn(_ signedIn: Bool) {
+        guard isSignedIn != signedIn else { return }
+        isSignedIn = signedIn
+        UserDefaults.standard.set(signedIn, forKey: Self.signedInKey)
+        log.add("app", "instagram session cookie: \(signedIn ? "present" : "absent")")
+        // Signing in or out switches between the native bar and Instagram's own.
+        applyFilterConfig()
     }
 
     /// Whether Instagram's session cookie exists. Only the cookie's name and site are looked at.
@@ -149,9 +261,7 @@ final class BrowserModel: NSObject, ObservableObject {
                 cookie.name == "sessionid" && cookie.domain.hasSuffix("instagram.com") && !cookie.value.isEmpty
             }
             Task { @MainActor [weak self] in
-                guard let self, self.isSignedIn != signedIn else { return }
-                self.isSignedIn = signedIn
-                self.log.add("app", "instagram session cookie: \(signedIn ? "present" : "absent")")
+                self?.setSignedIn(signedIn)
             }
         }
     }
@@ -174,9 +284,11 @@ final class BrowserModel: NSObject, ObservableObject {
             "\(DeviceInfo.system) · \(DeviceInfo.model)",
             "User-Agent: \(userAgent.isEmpty ? "(not read yet)" : userAgent)",
             "Signed in: \(isSignedIn.map { $0 ? "yes" : "no" } ?? "unknown")",
-            "Settings: \(store.settings.json)",
+            "Settings: \(store.settings.summary)",
             "Page: \(webView.url?.redacted ?? "(none)")",
             "Hidden elements: \(hiddenCount) · Blocked: \(blockedCount)",
+            "Native bar: \(showsNativeBar ? "shown" : "not shown") · Instagram's bar found: \(barDetected ? "yes" : "no")"
+                + " · own page known: \(profilePath == nil ? "no" : "yes")",
             "",
             "--- page on screen ---",
             snapshot
@@ -195,7 +307,7 @@ final class BrowserModel: NSObject, ObservableObject {
     // MARK: - Filter script
 
     /// instagram.js with its two placeholders filled in: the switches and the stylesheet.
-    private static func filterSource(settings: FilterSettings) -> String? {
+    private static func filterSource(config: String) -> String? {
         guard let scriptURL = Bundle.main.url(forResource: "instagram", withExtension: "js"),
               let styleURL = Bundle.main.url(forResource: "instagram", withExtension: "css"),
               let script = try? String(contentsOf: scriptURL, encoding: .utf8),
@@ -203,7 +315,7 @@ final class BrowserModel: NSObject, ObservableObject {
               let styleData = try? JSONEncoder().encode(style),
               let styleLiteral = String(data: styleData, encoding: .utf8) else { return nil }
         return script
-            .replacingOccurrences(of: "__SG_CONFIG__", with: settings.json)
+            .replacingOccurrences(of: "__SG_CONFIG__", with: config)
             .replacingOccurrences(of: "__SG_CSS__", with: styleLiteral)
     }
 
@@ -215,19 +327,21 @@ final class BrowserModel: NSObject, ObservableObject {
             log.add("app", "debug: filter not installed")
             return
         }
-        guard let source = Self.filterSource(settings: store.settings) else {
+        let config = store.settings.filterConfig(nativeBarActive: nativeBarActive)
+        guard let source = Self.filterSource(config: config) else {
             log.add("error", "filter files are missing from the app bundle")
             return
         }
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
     }
 
-    /// A switch changed: pages loaded from now on get the new values, and the page on screen is
-    /// updated in place, without a reload.
-    private func settingsChanged() {
-        log.add("app", "settings \(store.settings.json)")
+    /// A switch changed, or someone signed in or out: pages loaded from now on get the new
+    /// values, and the page on screen is updated in place, without a reload.
+    private func applyFilterConfig() {
+        log.add("app", "settings \(store.settings.summary)")
         installFilterScript()
-        let update = "window.__scrollGuard && window.__scrollGuard.configure(\(store.settings.json)); true;"
+        let config = store.settings.filterConfig(nativeBarActive: nativeBarActive)
+        let update = "window.__scrollGuard && window.__scrollGuard.configure(\(config)); true;"
         webView.evaluateJavaScript(update) { _, _ in }
     }
 
@@ -289,7 +403,13 @@ final class BrowserModel: NSObject, ObservableObject {
     /// This is the safety net: if the script did not leave a Reels page within a moment (it is
     /// missing, or Instagram changed under it), the app leaves it.
     private func urlChanged(_ url: URL?) {
-        guard let url, store.settings.blockReelsFeed, Routes.classify(url) == .feed else { return }
+        guard let url else { return }
+        let path = url.path.hasSuffix("/") ? url.path : url.path + "/"
+        if path != currentPath { currentPath = path }
+        let onInstagram = Routes.isInstagram(url)
+        if onInstagram != isOnInstagram { isOnInstagram = onInstagram }
+
+        guard store.settings.blockReelsFeed, Routes.classify(url) == .feed else { return }
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard let self, self.store.settings.blockReelsFeed,
@@ -300,6 +420,7 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     @objc private func pulledToRefresh() {
+        log.add("app", "pulled to refresh")
         reload()
     }
 
@@ -542,6 +663,18 @@ extension BrowserModel: WKScriptMessageHandler {
                 hiddenCount += count
                 log.add("filter", "hid \(count) element\(count == 1 ? "" : "s")")
             }
+        case "bar":
+            // The account's own page arrives here for the Profile button: kept, never logged.
+            if let profile = body["profile"] as? String, profile.hasPrefix("/"), profile.hasSuffix("/"), profile.count < 64 {
+                profilePath = profile
+            }
+            if (body["present"] as? Bool) == true, !barDetected {
+                barDetected = true
+                UserDefaults.standard.set(true, forKey: Self.barDetectedKey)
+                log.add("bar", "Instagram's bar found: the native bar takes its place")
+            }
+        case "transition":
+            if (body["kind"] as? String) == "push" { animatePush() }
         case "edges":
             let top = Self.edgeColor(body["top"])
             let bottom = Self.edgeColor(body["bottom"])

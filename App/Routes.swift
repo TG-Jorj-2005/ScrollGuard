@@ -44,6 +44,10 @@ enum Routes {
             if parts.count >= 2, isClipID(parts[1]) { return .clip(id: parts[1]) }
             return .feed
         }
+        // A clip under its author's name, /<name>/reel/<id>/: the form signed-in pages link to.
+        if parts.count >= 3, parts[1].lowercased() == "reel", isClipID(parts[2]) {
+            return .clip(id: parts[2])
+        }
         return nil
     }
 
@@ -61,7 +65,7 @@ extension Routes {
         "notifications", "your_activity", "legal", "about", "web"
     ]
     private static let knownWords: Set<String> = [
-        "inbox", "t", "new", "requests", "tagged", "reels", "saved", "audio", "login", "onetap",
+        "p", "reel", "inbox", "t", "new", "requests", "tagged", "reels", "saved", "audio", "login", "onetap",
         "edit", "tags", "locations", "search", "people", "highlights", "comments", "liked_by",
         "followers", "following", "activity", "signup", "password", "reset"
     ]

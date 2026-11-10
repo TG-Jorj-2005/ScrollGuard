@@ -11,6 +11,8 @@ import WebKit
 ///   - touch and hold it to open the ScrollGuard panel.
 struct RootView: View {
     @EnvironmentObject private var browser: BrowserModel
+    /// Observed so that flipping a switch in the panel redraws this view (the native bar).
+    @EnvironmentObject private var store: SettingsStore
     @State private var showPanel = false
     @State private var showHint = false
 
@@ -54,8 +56,16 @@ struct RootView: View {
                     }
                     .padding(.top, 10)
                 }
+
+                if browser.showsNativeBar {
+                    NativeBar(active: browser.activeTab, color: Color(uiColor: browser.bottomEdgeColor)) { tab in
+                        browser.select(tab)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .ignoresSafeArea(.container, edges: .top)
+            .animation(.spring(response: 0.32, dampingFraction: 0.9), value: browser.showsNativeBar)
         }
         // What shows under the home indicator: the colour of the page's bottom edge.
         .background(Color(uiColor: browser.bottomEdgeColor).ignoresSafeArea())
@@ -116,6 +126,60 @@ private struct StatusStrip: View {
             .onLongPressGesture(minimumDuration: 0.35, perform: onHold)
             .accessibilityLabel("ScrollGuard")
             .accessibilityHint("Touch and hold to open the ScrollGuard panel")
+    }
+}
+
+/// The native bottom bar: Instagram's destinations without Reels. It is drawn in the colour of
+/// the page's bottom edge, so it reads as part of the page, but it never flickers or jumps when
+/// the page changes, and its buttons answer at once.
+private struct NativeBar: View {
+    let active: BrowserModel.Tab?
+    let color: Color
+    let select: (BrowserModel.Tab) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(BrowserModel.Tab.allCases, id: \.self) { tab in
+                Button {
+                    select(tab)
+                } label: {
+                    Image(systemName: symbol(for: tab))
+                        .font(.system(size: 23, weight: tab == active ? .semibold : .regular))
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(label(for: tab))
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(height: 49)
+        .background(color)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(height: 0.5)
+        }
+    }
+
+    private func symbol(for tab: BrowserModel.Tab) -> String {
+        let isActive = tab == active
+        switch tab {
+        case .home: return isActive ? "house.fill" : "house"
+        case .search: return "magnifyingglass"
+        case .messages: return isActive ? "paperplane.fill" : "paperplane"
+        case .profile: return isActive ? "person.crop.circle.fill" : "person.crop.circle"
+        }
+    }
+
+    private func label(for tab: BrowserModel.Tab) -> String {
+        switch tab {
+        case .home: return "Home"
+        case .search: return "Search"
+        case .messages: return "Messages"
+        case .profile: return "Profile"
+        }
     }
 }
 

@@ -107,6 +107,8 @@ run 4-reels 20 -debugStartURL "https://www.instagram.com/reels/"
 run 5-panel 12 -debugShowPanel YES
 # Right after a start: the label with the build's version is on screen for a few seconds.
 run 6-launch 2
+# The native bottom bar, forced on although nobody is signed in, to see how it is drawn.
+run 7-bar 12 -debugForceBar YES
 
 echo "Checks:"
 expect 1-home "[page] commit www.instagram.com" "Instagram loaded in the web view"

@@ -36,6 +36,17 @@ struct ControlPanel: View {
                 }
 
                 Section {
+                    FilterToggle(title: "Native tab bar",
+                                 detail: "A bar that stays put, in place of Instagram's own.",
+                                 isOn: $store.settings.nativeBar)
+                    FilterToggle(title: "Page transitions",
+                                 detail: "A short slide when a page opens.",
+                                 isOn: $store.settings.pageTransitions)
+                } header: {
+                    Text("Feel")
+                }
+
+                Section {
                     Button {
                         browser.loadHome()
                         dismiss()

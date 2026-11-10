@@ -1,6 +1,6 @@
 import Foundation
 
-/// The three switches of the control panel. All on by default.
+/// The switches of the control panel. All on by default.
 struct FilterSettings: Equatable {
     /// Hide the Reels tab and suggested-reels shelves.
     var hideReels = true
@@ -8,12 +8,25 @@ struct FilterSettings: Equatable {
     var blockReelsFeed = true
     /// Keep an opened clip alone: swiping from it to the next reel is held back.
     var singleClip = true
+    /// Show a native bottom bar in place of Instagram's own.
+    var nativeBar = true
+    /// A short slide when a page opens on top of another.
+    var pageTransitions = true
 
     var isProtecting: Bool { hideReels && blockReelsFeed && singleClip }
 
-    /// The same values as the object `instagram.js` reads as its configuration.
-    var json: String {
-        "{\"hideReels\":\(hideReels),\"blockReelsFeed\":\(blockReelsFeed),\"singleClip\":\(singleClip)}"
+    /// The object `instagram.js` reads as its configuration. `nativeBarActive` is true while
+    /// the native bar is in use (switched on, and signed in), which is when the page hides
+    /// its own bar.
+    func filterConfig(nativeBarActive: Bool) -> String {
+        "{\"hideReels\":\(hideReels),\"blockReelsFeed\":\(blockReelsFeed),\"singleClip\":\(singleClip),"
+            + "\"nativeBar\":\(nativeBarActive)}"
+    }
+
+    /// For the diagnostics log.
+    var summary: String {
+        "hideReels=\(hideReels) blockReelsFeed=\(blockReelsFeed) singleClip=\(singleClip) "
+            + "nativeBar=\(nativeBar) pageTransitions=\(pageTransitions)"
     }
 }
 
@@ -26,6 +39,8 @@ final class SettingsStore: ObservableObject {
             defaults.set(settings.hideReels, forKey: Keys.hideReels)
             defaults.set(settings.blockReelsFeed, forKey: Keys.blockReelsFeed)
             defaults.set(settings.singleClip, forKey: Keys.singleClip)
+            defaults.set(settings.nativeBar, forKey: Keys.nativeBar)
+            defaults.set(settings.pageTransitions, forKey: Keys.pageTransitions)
         }
     }
 
@@ -35,6 +50,8 @@ final class SettingsStore: ObservableObject {
         static let hideReels = "hideReels"
         static let blockReelsFeed = "blockReelsFeed"
         static let singleClip = "singleClip"
+        static let nativeBar = "nativeBar"
+        static let pageTransitions = "pageTransitions"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -43,6 +60,8 @@ final class SettingsStore: ObservableObject {
         func stored(_ key: String) -> Bool { defaults.object(forKey: key) as? Bool ?? true }
         settings = FilterSettings(hideReels: stored(Keys.hideReels),
                                   blockReelsFeed: stored(Keys.blockReelsFeed),
-                                  singleClip: stored(Keys.singleClip))
+                                  singleClip: stored(Keys.singleClip),
+                                  nativeBar: stored(Keys.nativeBar),
+                                  pageTransitions: stored(Keys.pageTransitions))
     }
 }

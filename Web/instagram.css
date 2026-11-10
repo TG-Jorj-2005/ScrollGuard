@@ -38,3 +38,10 @@ html[data-sg-hide] a[href^="/reels/?"] {
 html[data-sg-hide] [data-sg-hidden] {
   display: none !important;
 }
+
+/* --- Native bar: while the app shows its own bottom bar (<html data-sg-native-bar>), the
+       page's bar, marked by instagram.js, is hidden. It stays in the page: the native buttons
+       work by clicking its links. --- */
+html[data-sg-native-bar] [data-sg-bar] {
+  display: none !important;
+}

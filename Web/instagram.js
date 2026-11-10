@@ -16,7 +16,7 @@
 (function () {
   'use strict';
 
-  var cfg = __SG_CONFIG__; // { hideReels, blockReelsFeed, singleClip }
+  var cfg = __SG_CONFIG__; // { hideReels, blockReelsFeed, singleClip, nativeBar }
   var css = __SG_CSS__;
 
   var INSTAGRAM = /(^|\.)instagram\.com$/i;
@@ -73,6 +73,10 @@
       if (parts.length >= 2 && isClipId(parts[1])) return { kind: 'clip', id: parts[1] };
       return { kind: 'feed' };
     }
+    // A clip under its author's name, /<name>/reel/<id>/: the form signed-in pages link to.
+    if (parts.length >= 3 && parts[1].toLowerCase() === 'reel' && isClipId(parts[2])) {
+      return { kind: 'clip', id: parts[2] };
+    }
     return null;
   }
 
@@ -91,7 +95,7 @@
   // Account names, conversation numbers and post ids never enter the log or the report.
   var KNOWN_HEADS = ['reels', 'reel', 'p', 'explore', 'direct', 'stories', 'accounts', 'tv',
     'challenge', 'notifications', 'your_activity', 'legal', 'about', 'web'];
-  var KNOWN_WORDS = ['inbox', 't', 'new', 'requests', 'tagged', 'reels', 'saved', 'audio', 'login',
+  var KNOWN_WORDS = ['p', 'reel', 'inbox', 't', 'new', 'requests', 'tagged', 'reels', 'saved', 'audio', 'login',
     'onetap', 'edit', 'tags', 'locations', 'search', 'people', 'highlights', 'comments', 'liked_by',
     'followers', 'following', 'activity', 'signup', 'password', 'reset'];
 
@@ -221,10 +225,24 @@
     scheduleScan();
   }
 
+  /**
+   * Tells the app that a new page is about to open, so it can animate the change. Only for a
+   * page opened on top of the current one; going back and Instagram's own animated screens
+   * (stories) are left alone.
+   */
+  function announcePush(target) {
+    var url;
+    try { url = new URL(String(target), location.href); } catch (e) { return; }
+    if (!INSTAGRAM.test(url.hostname) || url.pathname === location.pathname) return;
+    if (url.pathname.indexOf('/stories/') === 0) return;
+    post({ t: 'transition', kind: 'push' });
+  }
+
   ['pushState', 'replaceState'].forEach(function (name) {
     var original = history[name];
     if (typeof original !== 'function') return;
     history[name] = function () {
+      if (name === 'pushState' && arguments.length > 2 && arguments[2] != null) announcePush(arguments[2]);
       var result = original.apply(this, arguments);
       setTimeout(function () { onRouteChange(name); }, 0);
       return result;
@@ -232,6 +250,22 @@
   });
   window.addEventListener('popstate', function () {
     setTimeout(function () { onRouteChange('popstate'); }, 0);
+  });
+  // Newer WebKit has the Navigation API, and Instagram uses it where it exists: some page
+  // changes then call neither pushState nor popstate, and were only noticed by the poll below.
+  if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+    window.navigation.addEventListener('navigate', function (event) {
+      if (event.navigationType === 'push' && event.destination && !event.hashChange) {
+        announcePush(event.destination.url);
+      }
+    });
+    window.navigation.addEventListener('currententrychange', function (event) {
+      var kind = (event && event.navigationType) || 'navigation';
+      setTimeout(function () { onRouteChange(kind); }, 0);
+    });
+  }
+  window.addEventListener('pageshow', function () {
+    setTimeout(function () { onRouteChange('pageshow'); }, 0);
   });
   // Safety net for navigation that uses neither (the Navigation API, a future router).
   setInterval(function () { onRouteChange('poll'); }, 500);
@@ -368,9 +402,89 @@
     return 1;
   }
 
+  // ---------------------------------------------------------------- Instagram's own bar
+
+  // The app can show a native bar in place of Instagram's bottom bar. Instagram's bar is then
+  // hidden, not removed: a tap on a native button clicks the matching link inside it, so
+  // Instagram changes page in place, as if its own button had been tapped.
+
+  var TAB_PATHS = { home: '/', search: '/explore/', messages: '/direct/inbox/' };
+  var barElement = null;
+  var profilePath = null; // the signed-in account's own page, read from the bar's last link
+  try { profilePath = localStorage.getItem('sg-profile-path'); } catch (e) { /* storage blocked */ }
+  var lastBarReport = '';
+
+  /** Instagram's bottom bar: the fixed element at the bottom that holds the search and messages links. */
+  function findBar() {
+    if (barElement && barElement.isConnected) return barElement;
+    var links = document.querySelectorAll('a[href="/direct/inbox/"]');
+    for (var i = 0; i < links.length; i++) {
+      var element = links[i].parentElement;
+      for (var depth = 0; element && element !== document.body && depth < 12; element = element.parentElement, depth++) {
+        if (!element.querySelector('a[href="/explore/"]')) continue;
+        var position = getComputedStyle(element).position;
+        if (position !== 'fixed' && position !== 'sticky') continue;
+        if (element.hasAttribute('data-sg-bar')) return element;
+        var box = element.getBoundingClientRect();
+        if (box.height > 20 && box.height < 140 && box.top > window.innerHeight * 0.5) return element;
+        break; // fixed, but not a bar at the bottom (a side menu): not this link
+      }
+    }
+    return null;
+  }
+
+  function watchBar() {
+    var root = document.documentElement;
+    if (!root || !document.body) return;
+    barElement = findBar();
+    if (barElement) {
+      if (!barElement.hasAttribute('data-sg-bar')) barElement.setAttribute('data-sg-bar', '');
+      var anchors = barElement.querySelectorAll('a[href]');
+      for (var i = 0; i < anchors.length; i++) {
+        var href = anchors[i].getAttribute('href');
+        if (/^\/[A-Za-z0-9._]+\/$/.test(href) && shape(href) === '/<name>/' && href !== profilePath) {
+          profilePath = href;
+          try { localStorage.setItem('sg-profile-path', href); } catch (e) { /* storage blocked */ }
+        }
+      }
+    }
+    if (cfg.nativeBar) root.setAttribute('data-sg-native-bar', '');
+    else root.removeAttribute('data-sg-native-bar');
+
+    var report = JSON.stringify([barElement !== null, profilePath]);
+    if (report !== lastBarReport) {
+      lastBarReport = report;
+      post({ t: 'bar', present: barElement !== null, profile: profilePath });
+    }
+  }
+
+  /**
+   * A native bar button was tapped. Returns how the page is being changed:
+   * 'click' (Instagram's own link, in place), 'load' (a full page load), 'already', 'unknown'.
+   */
+  function go(tab) {
+    var path = tab === 'profile' ? profilePath : TAB_PATHS[tab];
+    if (!path) return 'unknown';
+    if (location.pathname === path) return 'already';
+    var selector = 'a[href="' + path + '"]';
+    var link = barElement && barElement.isConnected ? barElement.querySelector(selector) : null;
+    if (!link) link = document.querySelector(selector);
+    if (!link) {
+      location.assign(path);
+      return 'load';
+    }
+    link.click();
+    // If the click changed nothing (a link that was only decoration), load the page.
+    setTimeout(function () {
+      if (location.pathname !== path) location.assign(path);
+    }, 600);
+    return 'click';
+  }
+
   function scan() {
     var root = document.documentElement;
     if (!root) return;
+    watchBar();
     if (!cfg.hideReels) {
       root.removeAttribute('data-sg-hide');
       return;
@@ -455,7 +569,8 @@
       },
       classify: classify,
       shape: shape,
-      snapshot: snapshot
+      snapshot: snapshot,
+      go: go
     }
   });
 
