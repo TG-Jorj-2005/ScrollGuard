@@ -71,6 +71,7 @@ struct ControlPanel: View {
                     Text("ScrollGuard \(DeviceInfo.appVersion)")
                 }
             }
+            .contentMargins(.top, 4, for: .scrollContent)
             .navigationTitle("ScrollGuard")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

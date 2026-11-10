@@ -18,7 +18,7 @@ struct RootView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                StatusStrip(onTap: { browser.scrollToTop() }, onHold: openPanel)
+                StatusStrip(color: chrome, onTap: { browser.scrollToTop() }, onHold: openPanel)
                     .frame(height: geometry.safeAreaInsets.top)
 
                 ZStack(alignment: .top) {
@@ -51,10 +51,12 @@ struct RootView: View {
             }
             .ignoresSafeArea(.container, edges: .top)
         }
-        .background(Color.black.ignoresSafeArea())
+        // The strip under the home indicator takes the page's colour too.
+        .background(chrome.ignoresSafeArea())
         // Like Safari: the keyboard covers the page instead of squeezing it; Instagram's own
         // layout already moves the message box above the keyboard.
         .ignoresSafeArea(.keyboard)
+        .animation(.easeOut(duration: 0.3), value: browser.chromeColor)
         .animation(.easeOut(duration: 0.35), value: browser.hasShownFirstPage)
         .animation(.easeOut(duration: 0.25), value: browser.failure)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: browser.toast)
@@ -87,6 +89,10 @@ struct RootView: View {
         }
     }
 
+    private var chrome: Color {
+        Color(uiColor: browser.chromeColor)
+    }
+
     private func openPanel() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         hasOpenedPanel = true
@@ -95,13 +101,14 @@ struct RootView: View {
     }
 }
 
-/// The area behind the status bar. Black, like Instagram's header under it.
+/// The area behind the status bar, in the colour of the page under it.
 private struct StatusStrip: View {
+    let color: Color
     let onTap: () -> Void
     let onHold: () -> Void
 
     var body: some View {
-        Color.black
+        color
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
             .onLongPressGesture(minimumDuration: 0.35, perform: onHold)

@@ -39,6 +39,9 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published var toast: Toast?
     /// A link to another website, shown in a Safari sheet.
     @Published var externalLink: ExternalLink?
+    /// The page's own background colour. The strips above and below the page take it, so they
+    /// join the page without a seam.
+    @Published private(set) var chromeColor: UIColor = .black
 
     private let store: SettingsStore
     private let log = DiagnosticsLog.shared
@@ -72,7 +75,6 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.overrideUserInterfaceStyle = .dark
         webView.isOpaque = false
         webView.backgroundColor = .black
-        webView.underPageBackgroundColor = .black
         webView.scrollView.backgroundColor = .black
         // The view is laid out inside the safe area already; no extra insets.
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -192,6 +194,11 @@ final class BrowserModel: NSObject, ObservableObject {
     private func installFilterScript() {
         let controller = webView.configuration.userContentController
         controller.removeAllUserScripts()
+        // For the simulator check only: the plain site, to compare against.
+        if UserDefaults.standard.bool(forKey: "debugNoFilter") {
+            log.add("app", "debug: filter not installed")
+            return
+        }
         guard let source = Self.filterSource(settings: store.settings) else {
             log.add("error", "filter files are missing from the app bundle")
             return
@@ -226,6 +233,43 @@ final class BrowserModel: NSObject, ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] url in self?.urlChanged(url) }
             .store(in: &subscriptions)
+        // WebKit works this colour out from the page's background.
+        webView.publisher(for: \.underPageBackgroundColor)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] color in self?.pageBackgroundChanged(color) }
+            .store(in: &subscriptions)
+    }
+
+    private func pageBackgroundChanged(_ color: UIColor?) {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        guard let color, color.getRed(&red, green: &green, blue: &blue, alpha: &alpha), alpha > 0.9 else { return }
+        // Only dark pages: the status bar's text is white and has to stay readable.
+        let luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        let next: UIColor = luminance < 0.25 ? color : .black
+        if next != chromeColor { chromeColor = next }
+    }
+
+    /// What is actually in the page, for the diagnostics log: sizes and counts, no content.
+    private static let pageProbe = """
+        (function () {
+          var d = document, b = d.body;
+          return JSON.stringify({
+            ready: d.readyState,
+            html: d.documentElement ? d.documentElement.outerHTML.length : 0,
+            text: b ? b.innerText.length : 0,
+            children: b ? b.children.length : 0,
+            scripts: d.scripts.length,
+            inputs: d.querySelectorAll('input').length,
+            links: d.links.length
+          });
+        })()
+        """
+
+    private func probePage(_ label: String) {
+        webView.evaluateJavaScript(Self.pageProbe) { [weak self] value, error in
+            let text = value as? String ?? "failed: \(error?.localizedDescription ?? "no result")"
+            Task { @MainActor [weak self] in self?.log.add("page", "\(label) \(text)") }
+        }
     }
 
     /// In-page navigation never reaches the navigation delegate; the page script handles it.
@@ -355,6 +399,15 @@ extension BrowserModel: WKNavigationDelegate {
         decisionHandler(.allow)
     }
 
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
+        if navigationResponse.isForMainFrame, let response = navigationResponse.response as? HTTPURLResponse {
+            let type = response.value(forHTTPHeaderField: "Content-Type") ?? "?"
+            log.add("page", "response \(response.statusCode) \(response.url?.redacted ?? "?") (\(type))")
+        }
+        decisionHandler(.allow)
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         failure = nil
     }
@@ -369,6 +422,12 @@ extension BrowserModel: WKNavigationDelegate {
         refreshControl.endRefreshing()
         log.add("page", "finish \(webView.url?.redacted ?? "?")")
         refreshSignInState()
+        // Instagram draws its pages with JavaScript after the load finishes: look twice.
+        probePage("content at finish")
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            self?.probePage("content 4 s later")
+        }
         if userAgent.isEmpty {
             webView.evaluateJavaScript("navigator.userAgent") { [weak self] value, _ in
                 let text = value as? String ?? ""

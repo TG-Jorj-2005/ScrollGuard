@@ -92,18 +92,22 @@ expect() {
   fi
 }
 
+LOGIN="https://www.instagram.com/accounts/login/"
+
 run 1-home 25
-run 2-profile 25 -debugStartURL "https://www.instagram.com/instagram/"
-run 3-reels 20 -debugStartURL "https://www.instagram.com/reels/"
-run 4-panel 12 -debugShowPanel YES
+run 2-login 25 -debugStartURL "$LOGIN"
+# The same page with no filter installed at all: if it differs, the filter is at fault.
+run 3-login-plain 25 -debugStartURL "$LOGIN" -debugNoFilter YES
+run 4-reels 20 -debugStartURL "https://www.instagram.com/reels/"
+run 5-panel 12 -debugShowPanel YES
 
 echo "Checks:"
 expect 1-home "[page] commit www.instagram.com" "Instagram loaded in the web view"
 expect 1-home "[nav] allow www.instagram.com" "the navigation rules are consulted"
 expect 1-home "[filter] running on" "the filter script runs in the page"
-expect 2-profile "[filter] running on" "the filter script runs on a profile page"
-expect 3-reels "[block] load /reels/" "a direct load of the Reels viewer is refused"
-expect 3-reels "[nav] allow www.instagram.com/" "after the refusal the feed is opened instead"
+expect 2-login "[filter] running on /accounts/login" "the filter script runs on the sign-in page"
+expect 4-reels "[block] load /reels" "a direct load of the Reels viewer is refused"
+expect 4-reels "[nav] allow www.instagram.com/" "after the refusal the feed is opened instead"
 
 # Crash reports written by the simulator during this run, if any.
 find ~/Library/Logs/DiagnosticReports -name 'ScrollGuard*' -newer "$OUT/build-sim.log" -print0 2> /dev/null |
