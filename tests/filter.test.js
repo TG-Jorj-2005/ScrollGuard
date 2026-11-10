@@ -150,11 +150,15 @@ test('a tap on a clip goes through: a single clip is allowed to open', async () 
   assert.equal(page.messages.filter((m) => m.t === 'blocked').length, 0);
 });
 
-/** Opens the page of one clip, with a video that fills the 768-point-high test screen. */
-function openClip({ url = 'https://www.instagram.com/reel/CLIP1234567/', config = ALL_ON, videoHeight = 700 } = {}) {
+/**
+ * Opens the page of one clip, with a video that fills the 768-point-high test screen.
+ * `videoWidth`: the whole width by default; a smaller one is a video that sits in the page.
+ */
+function openClip({ url = 'https://www.instagram.com/reel/CLIP1234567/', config = ALL_ON, videoHeight = 700, videoWidth } = {}) {
   const page = open({ url, html: clipHTML, config });
+  const width = videoWidth === undefined ? page.window.innerWidth : videoWidth;
   page.document.getElementById('clip').getBoundingClientRect = () => (
-    { top: 0, left: 0, right: 400, bottom: videoHeight, width: 400, height: videoHeight }
+    { top: 0, left: 0, right: width, bottom: videoHeight, width, height: videoHeight }
   );
   return page;
 }
@@ -215,6 +219,34 @@ test('swipes are not held back elsewhere: the feed, a post page, a small video',
 
   const small = openClip({ videoHeight: 300 });
   assert.equal(swipe(small, 'clip', 0, -150).defaultPrevented, false, 'a clip page laid out as a post scrolls');
+});
+
+test('a clip opened over a conversation is kept alone too, although the address does not change', async () => {
+  const thread = 'https://www.instagram.com/direct/t/340282366841710300949128/';
+  const page = openClip({ url: thread });
+  assert.equal(swipe(page, 'clip', 0, -150).defaultPrevented, true, 'a full-screen clip over the conversation');
+  assert.deepEqual(page.messages.filter((m) => m.t === 'held'), [{ t: 'held', path: '/direct/t/340282366841710300949128/' }]);
+  assert.equal(swipe(page, 'comment', 0, -150).defaultPrevented, false, 'a sheet over the clip still scrolls');
+
+  // A video that only sits in a message bubble: the conversation scrolls as usual.
+  const bubble = openClip({ url: thread, videoWidth: 250 });
+  assert.equal(swipe(bubble, 'clip', 0, -150).defaultPrevented, false);
+});
+
+test('a viewer that is itself a dialog is still held: only a sheet over the clip is exempt', async () => {
+  const page = openClip();
+  page.document.getElementById('viewer').setAttribute('role', 'dialog');
+  assert.equal(swipe(page, 'clip', 0, -150).defaultPrevented, true);
+  assert.equal(swipe(page, 'comment', 0, -150).defaultPrevented, false);
+});
+
+test('the first full-screen video on each kind of page is described in the log, structure only', async () => {
+  const page = openClip({ url: 'https://www.instagram.com/direct/t/340282366841710300949128/' });
+  await sleep(900);
+  const lines = page.messages.filter((m) => m.t === 'structure');
+  assert.equal(lines.length, 1, 'once per kind of page');
+  assert.match(lines[0].text, /^full-screen video on \/direct\/t\/\*\/ \(kept alone\): video /);
+  assert.equal(lines[0].text.includes('340282366841710300949128'), false, 'no conversation number');
 });
 
 test('with "one clip at a time" off, an opened clip scrolls on as on the plain site', async () => {
@@ -395,6 +427,21 @@ test('native bar: a native button clicks Instagram\'s own link, so the page chan
   assert.equal(go('home'), 'click');
   assert.deepEqual(clicked, ['/explore/', '/direct/inbox/', '/me/', '/']);
   assert.equal(go('reels'), 'unknown', 'there is no button for Reels');
+});
+
+test('native bar: with no link on the page, it goes back to an earlier visit instead of loading', async () => {
+  const page = openWithBar({ ...ALL_ON, nativeBar: true });
+  await sleep(250);
+  page.window.history.pushState({}, '', '/direct/inbox/');
+  await sleep(50);
+  // The messages screen has neither Instagram's bar nor any link to the feed.
+  page.document.getElementById('bottom-bar').remove();
+  page.document.getElementById('tab-home')?.remove();
+  for (const link of page.document.querySelectorAll('a[href="/"]')) link.remove();
+
+  assert.equal(page.window.__scrollGuard.go('home'), 'back');
+  await sleep(150);
+  assert.equal(page.window.location.pathname, '/');
 });
 
 test('a clip linked under its author\'s name is a clip too, and its swipes are held back', async () => {

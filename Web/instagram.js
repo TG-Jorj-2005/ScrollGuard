@@ -290,30 +290,70 @@
   // A clip opened from a post, a profile or a conversation fills the screen, and swiping up
   // brings the next reel, then the next: the endless viewer by another door. While such a clip
   // is on screen, vertical swipes over it are held back, before the page or the browser sees
-  // them. Taps (pause, like, sound), horizontal swipes (back) and anything inside a sheet
-  // (comments, sharing) work as usual.
+  // them. Taps (pause, like, sound), horizontal swipes (back) and anything inside a sheet over
+  // the clip (comments, sharing) work as usual.
 
-  /** True when a video fills most of the screen, around its middle. */
-  function clipFillsScreen() {
+  /**
+   * The video that fills the screen, if one does: most of the height, around the middle.
+   * `fullWidth` also asks for the whole width, which tells an opened clip from a video that
+   * merely sits in the page (a message bubble).
+   */
+  function screenFillingVideo(fullWidth) {
+    var width = window.innerWidth;
     var height = window.innerHeight;
     var videos = document.querySelectorAll('video');
     for (var i = 0; i < videos.length; i++) {
       var box = videos[i].getBoundingClientRect();
-      if (box.height >= height * 0.6 && box.top < height * 0.5 && box.bottom > height * 0.5) return true;
+      if (fullWidth && box.width < width * 0.9) continue;
+      if (box.height >= height * 0.6 && box.top < height * 0.5 && box.bottom > height * 0.5) return videos[i];
     }
-    return false;
+    return null;
+  }
+
+  /**
+   * The opened clip to keep alone, if there is one on this page:
+   *   - on a clip's own page, the video that fills the screen;
+   *   - in a conversation, the same, at full width: a clip sent there opens over the
+   *     conversation, and the address does not change.
+   * Nowhere else: in the feed, tall videos are posts to scroll past.
+   */
+  function openedClip() {
+    if (onClipPage()) return screenFillingVideo(false);
+    if (location.pathname.indexOf('/direct/') === 0) return screenFillingVideo(true);
+    return null;
   }
 
   var swipe = null; // the touch being followed: where it began, whether it was reported
 
   document.addEventListener('touchstart', function (event) {
     swipe = null;
-    if (!cfg.singleClip || !event.touches || event.touches.length !== 1 || !onClipPage()) return;
+    if (!cfg.singleClip || !event.touches || event.touches.length !== 1) return;
+    var clip = openedClip();
+    if (!clip) return;
+    // A sheet over the clip scrolls as usual. A dialog that holds the clip itself is the viewer.
     var target = event.target;
-    if (target && target.closest && target.closest('[role="dialog"]')) return;
-    if (!clipFillsScreen()) return;
+    var dialog = target && target.closest ? target.closest('[role="dialog"]') : null;
+    if (dialog && !dialog.contains(clip)) return;
     swipe = { x: event.touches[0].clientX, y: event.touches[0].clientY, reported: false };
   }, { capture: true, passive: true });
+
+  // With no Mac to inspect the page, the first full-screen video seen on each kind of page is
+  // described in the log: what it sits in, what scrolls. Structure only, no content.
+  var describedPages = {};
+  function describeFullScreenVideo() {
+    var video = screenFillingVideo(true);
+    if (!video) return;
+    var page = shape(location.pathname);
+    if (describedPages[page]) return;
+    describedPages[page] = true;
+    var chain = [];
+    for (var element = video, depth = 0; element && element !== document.body && depth < 14; element = element.parentElement, depth++) {
+      chain.push(describe(element));
+    }
+    var kept = cfg.singleClip && openedClip() !== null;
+    post({ t: 'structure', text: 'full-screen video on ' + page + (kept ? ' (kept alone)' : ' (not held)') + ': ' + chain.join(' < ') });
+  }
+  setInterval(describeFullScreenVideo, 700);
 
   function holdBack(event, x, y) {
     if (!swipe) return;
@@ -458,9 +498,34 @@
     }
   }
 
+  /** Goes back through this page's history to the nearest earlier visit of `path`, if any. */
+  function goBackTo(path) {
+    try {
+      var api = window.navigation;
+      if (api && typeof api.entries === 'function' && api.currentEntry) {
+        var entries = api.entries();
+        for (var i = api.currentEntry.index - 1; i >= 0; i--) {
+          if (!entries[i].sameDocument) break;
+          if (new URL(entries[i].url).pathname === path) {
+            api.traverseTo(entries[i].key);
+            return true;
+          }
+        }
+        return false;
+      }
+    } catch (e) { /* fall through to the plain history */ }
+    // Without the Navigation API only the page just before this one is known.
+    if (previousPath === path && history.length > 1) {
+      history.back();
+      return true;
+    }
+    return false;
+  }
+
   /**
-   * A native bar button was tapped. Returns how the page is being changed:
-   * 'click' (Instagram's own link, in place), 'load' (a full page load), 'already', 'unknown'.
+   * A native bar button was tapped. Returns how the page is being changed: 'click' (Instagram's
+   * own link, in place), 'back' (back to an earlier visit, in place), 'load' (a full page
+   * load), 'already', 'unknown'.
    */
   function go(tab) {
     var path = tab === 'profile' ? profilePath : TAB_PATHS[tab];
@@ -470,6 +535,9 @@
     var link = barElement && barElement.isConnected ? barElement.querySelector(selector) : null;
     if (!link) link = document.querySelector(selector);
     if (!link) {
+      // No link to it on this page (the messages screen has none). If the page was visited on
+      // the way here, go back to it, which Instagram does in place; otherwise load it.
+      if (goBackTo(path)) return 'back';
       location.assign(path);
       return 'load';
     }

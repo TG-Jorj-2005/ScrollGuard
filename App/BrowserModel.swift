@@ -170,7 +170,7 @@ final class BrowserModel: NSObject, ObservableObject {
                 guard let self else { return }
                 self.log.add("bar", "\(tab.rawValue): \(result)")
                 // The filter could not do it (it is not running on this page): load the page.
-                if result != "click" && result != "load" && result != "already" { self.load(tab) }
+                if !["click", "back", "load", "already"].contains(result) { self.load(tab) }
             }
         }
     }
@@ -194,6 +194,7 @@ final class BrowserModel: NSObject, ObservableObject {
         guard store.settings.pageTransitions, !UIAccessibility.isReduceMotionEnabled,
               now > transitionsPausedUntil, now.timeIntervalSince(lastTransition) > 0.35 else { return }
         lastTransition = now
+        log.add("anim", "slide for a page opening")
         webView.alpha = 0.25
         webView.transform = CGAffineTransform(translationX: 28, y: 0)
         UIView.animate(withDuration: 0.32, delay: 0, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState]) {
@@ -210,6 +211,15 @@ final class BrowserModel: NSObject, ObservableObject {
         started = true
         log.add("app", "ScrollGuard \(DeviceInfo.appVersion), \(DeviceInfo.system), \(DeviceInfo.model)")
         log.add("app", "settings \(store.settings.summary)")
+        // How many times the app started since it was installed, and which version ran before.
+        // After an update the count goes on if the app was updated in place, and starts again
+        // at 1 if it was removed and installed anew, which also signs out of Instagram.
+        let defaults = UserDefaults.standard
+        let launches = defaults.integer(forKey: "launchCount") + 1
+        let previousVersion = defaults.string(forKey: "lastVersion") ?? "none"
+        defaults.set(launches, forKey: "launchCount")
+        defaults.set(DeviceInfo.appVersion, forKey: "lastVersion")
+        log.add("app", "start \(launches) of this install, version before: \(previousVersion)")
         refreshSignInState()
         // For the simulator check in GitHub Actions (.github/scripts/smoke.sh): start on a given
         // page, passed as a launch argument. Never set on the phone.
@@ -675,6 +685,13 @@ extension BrowserModel: WKScriptMessageHandler {
             }
         case "transition":
             if (body["kind"] as? String) == "push" { animatePush() }
+        case "structure":
+            // What a full-screen video sits in: tags, roles, sizes. Long, so in several lines.
+            var rest = Substring((body["text"] as? String ?? "").prefix(1800))
+            while !rest.isEmpty {
+                log.add("clip", String(rest.prefix(280)))
+                rest = rest.dropFirst(280)
+            }
         case "edges":
             let top = Self.edgeColor(body["top"])
             let bottom = Self.edgeColor(body["bottom"])
