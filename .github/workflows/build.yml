@@ -41,6 +41,44 @@ jobs:
           npm ci --no-audit --no-fund
           npm test
 
+  # Starts the app in the iOS Simulator and saves screenshots and its diagnostics log. It runs
+  # beside the IPA build and does not hold the release back: Instagram may be slow or refuse a
+  # data-centre address, which says nothing about the app.
+  smoke:
+    name: Simulator check
+    needs: filter-tests
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Select Xcode
+        run: |
+          XCODE_APP="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ -d "$XCODE_APP" ]; then sudo xcode-select -s "$XCODE_APP/Contents/Developer"; fi
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Generate the Xcode project
+        run: xcodegen generate
+
+      - name: Start the app in the simulator
+        run: bash .github/scripts/smoke.sh
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: smoke
+          path: smoke/
+          retention-days: 7
+          if-no-files-found: warn
+
   ipa:
     name: Unsigned IPA
     needs: filter-tests

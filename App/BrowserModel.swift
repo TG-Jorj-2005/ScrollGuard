@@ -104,7 +104,14 @@ final class BrowserModel: NSObject, ObservableObject {
         started = true
         log.add("app", "ScrollGuard \(DeviceInfo.appVersion), \(DeviceInfo.system), \(DeviceInfo.model)")
         log.add("app", "settings \(store.settings.json)")
-        loadHome()
+        // For the simulator check in GitHub Actions (.github/scripts/smoke.sh): start on a given
+        // page, passed as a launch argument. Never set on the phone.
+        if let text = UserDefaults.standard.string(forKey: "debugStartURL"), let url = URL(string: text) {
+            log.add("app", "debug start page \(url.redacted)")
+            webView.load(URLRequest(url: url))
+        } else {
+            loadHome()
+        }
     }
 
     func loadHome() {

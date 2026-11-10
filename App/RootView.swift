@@ -79,7 +79,12 @@ struct RootView: View {
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             showHint = false
         }
-        .onAppear { browser.start() }
+        .onAppear {
+            browser.start()
+            // For the simulator check in GitHub Actions: a launch argument opens the panel, so a
+            // screenshot can show it. Never set on the phone.
+            if UserDefaults.standard.bool(forKey: "debugShowPanel") { showPanel = true }
+        }
     }
 
     private func openPanel() {
