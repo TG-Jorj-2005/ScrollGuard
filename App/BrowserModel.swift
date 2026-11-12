@@ -122,10 +122,22 @@ final class BrowserModel: NSObject, ObservableObject {
             }
         }
         NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
-            .sink { [weak self] _ in self?.captureLaunchImage() }
+            .sink { [weak self] _ in
+                self?.log.add("app", "left the front on \(self?.webView.url?.redacted ?? "?")")
+                self?.captureLaunchImage()
+            }
             .store(in: &subscriptions)
         NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
-            .sink { [weak self] _ in self?.becameActive() }
+            .sink { [weak self] _ in
+                self?.log.add("app", "in front")
+                self?.becameActive()
+            }
+            .store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
+            .sink { [weak self] _ in self?.log.add("app", "in the background") }
+            .store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)
+            .sink { [weak self] _ in self?.log.add("app", "terminated by iOS") }
             .store(in: &subscriptions)
 
         webView.navigationDelegate = self
@@ -611,11 +623,11 @@ extension BrowserModel: WKNavigationDelegate {
             decisionHandler(.cancel)
             if ["mailto", "tel", "sms", "facetime"].contains(scheme) {
                 // The Email and Call buttons of a business profile: Mail, Phone, Messages.
-                log.add("nav", "\(scheme): link handed to the system")
+                log.add("nav", "\(scheme): link handed to the system (\(navigationAction.navigationType.rawValue))")
                 UIApplication.shared.open(url)
             } else {
                 // instagram://, itms-apps:// — attempts to leave for another app.
-                log.add("nav", "ignored \(scheme): link")
+                log.add("nav", "ignored \(scheme): link (\(navigationAction.navigationType.rawValue))")
             }
             return
         }
@@ -629,7 +641,7 @@ extension BrowserModel: WKNavigationDelegate {
         // they lead nowhere useful: signed out, the sign-in page is what was wanted.
         let host = url.host?.lowercased() ?? ""
         if host == "applink.instagram.com" || host == "apps.apple.com" || host == "itunes.apple.com" {
-            log.add("nav", "ignored a link to the Instagram app")
+            log.add("nav", "ignored a link to the Instagram app (\(navigationAction.navigationType.rawValue))")
             decisionHandler(.cancel)
             if isSignedIn != true, webView.url?.path.hasPrefix("/accounts") != true {
                 webView.load(URLRequest(url: Routes.login))
@@ -638,7 +650,7 @@ extension BrowserModel: WKNavigationDelegate {
         }
 
         guard Routes.isFamily(url) else {
-            log.add("nav", "external \(url.redacted)")
+            log.add("nav", "external \(url.redacted) (\(navigationAction.navigationType.rawValue))")
             decisionHandler(.cancel)
             externalLink = ExternalLink(url: url)
             return
@@ -855,6 +867,10 @@ extension BrowserModel: WKScriptMessageHandler {
             log.add("filter", "running on \(path)")
         case "route":
             log.add("route", "\(path) (\(via))")
+        case "tap":
+            // A tapped link, as a shape, with the site it points to and its target window.
+            let target = String((body["target"] as? String ?? "").prefix(10))
+            log.add("tap", "\(path) on \(via)\(target.isEmpty ? "" : " target=\(target)")")
         case "blocked":
             registerBlock(path: path, via: via)
         case "held":
