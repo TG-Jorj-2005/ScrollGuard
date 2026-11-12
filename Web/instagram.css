@@ -12,18 +12,11 @@
   -webkit-touch-callout: none;
 }
 
+/* No `-webkit-user-select: none` on the page: with that rule on the whole page, WebKit on iOS 26
+   and later can throw while placing the text edit menu after a tap, which ends the app at once
+   (developer.apple.com/forums/thread/797368). Instagram's own styles decide what is selectable. */
 body {
-  -webkit-user-select: none;
-  user-select: none;
   overscroll-behavior-x: none;
-}
-
-input,
-textarea,
-[contenteditable],
-[contenteditable] * {
-  -webkit-user-select: text;
-  user-select: text;
 }
 
 /* --- Reels filter: only while <html data-sg-hide> is set (the "Hide Reels" switch). --- */
