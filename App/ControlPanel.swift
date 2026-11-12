@@ -6,6 +6,7 @@ import UIKit
 struct ControlPanel: View {
     @EnvironmentObject private var browser: BrowserModel
     @EnvironmentObject private var youtube: YouTubeModel
+    @EnvironmentObject private var notifier: Notifier
     @EnvironmentObject private var store: SettingsStore
     @Environment(\.dismiss) private var dismiss
     @State private var confirmClear = false
@@ -62,6 +63,28 @@ struct ControlPanel: View {
                 } footer: {
                     Text("Clips posted by people you follow stay in your feed.")
                 }
+
+                Section {
+                    FilterToggle(title: "Instagram messages",
+                                 detail: "When the count of unread conversations rises.",
+                                 isOn: $store.settings.notifyInstagram)
+                    FilterToggle(title: "YouTube activity",
+                                 detail: "When the count on YouTube's bell rises (signed in).",
+                                 isOn: $store.settings.notifyYouTube)
+                    if notifier.authorization == .denied {
+                        Button {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        } label: {
+                            Label("Allow notifications in Settings", systemImage: "bell.slash")
+                        }
+                    }
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    Text("Only while ScrollGuard is open: the sites are read as they are on screen, never fetched in the background. Counts only, no names or text.")
+                }
+                .onChange(of: store.settings.notifyInstagram) { _, on in if on { notifier.requestPermission() } }
+                .onChange(of: store.settings.notifyYouTube) { _, on in if on { notifier.requestPermission() } }
 
                 Section {
                     FilterToggle(title: "Native tab bar",
@@ -130,7 +153,10 @@ struct ControlPanel: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
-        .onAppear { browser.refreshSignInState() }
+        .onAppear {
+            browser.refreshSignInState()
+            notifier.refreshAuthorization()
+        }
     }
 
     private var accountText: String {

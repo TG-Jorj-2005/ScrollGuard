@@ -54,6 +54,8 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var barDetected: Bool
     /// The number Instagram shows on its own messages button, for the badge on the native one.
     @Published private(set) var unreadMessages = 0
+    /// Told when the count of unread conversations changes. Set by the app.
+    weak var notifier: Notifier?
     /// A picture of the feed as it last looked. Shown at launch until the live page is drawn,
     /// so the app opens on its content instead of an empty screen. Stays on the phone.
     @Published private(set) var launchImage: UIImage?
@@ -275,6 +277,12 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     /// The feed, or Instagram's sign-in page when nobody is signed in.
+    /// Opens a page of Instagram, from a tapped notification.
+    func open(path: String) {
+        guard let url = URL(string: path, relativeTo: Routes.home), Routes.isInstagram(url) else { return }
+        if webView.url?.path != url.path { webView.load(URLRequest(url: url)) }
+    }
+
     func loadHome() {
         failure = nil
         webView.load(URLRequest(url: isSignedIn == false ? Routes.login : Routes.home))
@@ -861,6 +869,9 @@ extension BrowserModel: WKScriptMessageHandler {
             }
             if let unread = (body["unread"] as? NSNumber)?.intValue, unread >= 0, unread < 1000, unread != unreadMessages {
                 unreadMessages = unread
+                let inboxInFront = store.platform == .instagram && currentPath.hasPrefix("/direct")
+                    && UIApplication.shared.applicationState == .active
+                notifier?.instagramUnread(unread, enabled: store.settings.notifyInstagram, onScreen: inboxInFront)
                 log.add("bar", "unread on the messages button: \(unread)")
             }
         case "drawn":
