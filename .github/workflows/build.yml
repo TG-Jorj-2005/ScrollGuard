@@ -177,7 +177,8 @@ jobs:
           BUILD: ${{ steps.version.outputs.build }}
         run: |
           NOTES="Unsigned IPA for SideStore, built from ${GITHUB_SHA::7}. Open ScrollGuard.ipa on the iPhone and choose SideStore."
-          gh release create "build-$BUILD" dist/ScrollGuard.ipa "dist/ScrollGuard-$VERSION.ipa" --repo "$GITHUB_REPOSITORY" \
+          (cd dist && shasum -a 256 ScrollGuard.ipa "ScrollGuard-$VERSION.ipa" > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          gh release create "build-$BUILD" dist/ScrollGuard.ipa "dist/ScrollGuard-$VERSION.ipa" dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --title "ScrollGuard $VERSION" --notes "$NOTES" --latest
           echo "### ScrollGuard $VERSION" >> "$GITHUB_STEP_SUMMARY"
           echo "https://github.com/$GITHUB_REPOSITORY/releases/latest" >> "$GITHUB_STEP_SUMMARY"

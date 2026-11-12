@@ -53,6 +53,10 @@ targets:
         # never records anything.
         NSCameraUsageDescription: "Instagram wants to use the camera."
         NSMicrophoneUsageDescription: "Instagram wants to use the microphone."
+        # Uploads use the system picker, which needs no permission. These cover the share sheet
+        # of a downloaded file ("Save Image") and any older picker path.
+        NSPhotoLibraryUsageDescription: "Instagram wants to choose a photo or video."
+        NSPhotoLibraryAddUsageDescription: "To save a photo or video to your library."
 
 schemes:
   ScrollGuard:

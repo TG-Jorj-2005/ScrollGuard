@@ -70,6 +70,11 @@ final class BrowserModel: NSObject, ObservableObject {
     private var subscriptions = Set<AnyCancellable>()
     private let refreshControl = UIRefreshControl()
     private var started = false
+    /// The web content process ended while the app was in the background: the page is loaded
+    /// again when the app is back in front, not while it cannot be seen.
+    private var reloadWhenActive = false
+    /// Where each running download is written, until it finishes.
+    private var downloadDestinations: [ObjectIdentifier: URL] = [:]
     private var userAgent = ""
     private var mainFrameStatus = 200
     private var recentBlocks: [Date] = []
@@ -117,6 +122,9 @@ final class BrowserModel: NSObject, ObservableObject {
         NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
             .sink { [weak self] _ in self?.captureLaunchImage() }
             .store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in self?.becameActive() }
+            .store(in: &subscriptions)
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -128,6 +136,8 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.scrollView.backgroundColor = .black
         // The view is laid out inside the safe area already; no extra insets.
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        // As in Messages: dragging a conversation down takes the keyboard with it.
+        webView.scrollView.keyboardDismissMode = .interactive
         // Lets Safari on a Mac inspect the page, should a Mac ever be available.
         webView.isInspectable = true
 
@@ -318,6 +328,13 @@ final class BrowserModel: NSObject, ObservableObject {
     func reload() {
         failure = nil
         if webView.url == nil { loadHome() } else { webView.reload() }
+    }
+
+    private func becameActive() {
+        guard reloadWhenActive else { return }
+        reloadWhenActive = false
+        log.add("page", "back in front: reloading the page lost in the background")
+        reload()
     }
 
     func scrollToTop() {
@@ -583,9 +600,15 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
         guard scheme == "https" || scheme == "http" else {
-            // instagram://, itms-apps://, mailto:, tel: — attempts to leave for another app.
-            log.add("nav", "ignored \(scheme): link")
             decisionHandler(.cancel)
+            if ["mailto", "tel", "sms", "facetime"].contains(scheme) {
+                // The Email and Call buttons of a business profile: Mail, Phone, Messages.
+                log.add("nav", "\(scheme): link handed to the system")
+                UIApplication.shared.open(url)
+            } else {
+                // instagram://, itms-apps:// — attempts to leave for another app.
+                log.add("nav", "ignored \(scheme): link")
+            }
             return
         }
         // Only the page itself is steered. Frames inside it (players, security checks) are the site's.
@@ -631,6 +654,13 @@ extension BrowserModel: WKNavigationDelegate {
             let type = response.value(forHTTPHeaderField: "Content-Type") ?? "?"
             log.add("page", "response \(response.statusCode) \(response.url?.redacted ?? "?") (\(type))")
             mainFrameStatus = response.statusCode
+        }
+        // A file the page cannot show (a data export, an attachment): download it and offer it
+        // to share or save, instead of a blank page.
+        if navigationResponse.isForMainFrame, !navigationResponse.canShowMIMEType {
+            log.add("page", "download \(navigationResponse.response.mimeType ?? "?")")
+            decisionHandler(.download)
+            return
         }
         decisionHandler(.allow)
     }
@@ -693,11 +723,25 @@ extension BrowserModel: WKNavigationDelegate {
         showLoadError(error, stage: "connect")
     }
 
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        // iOS reclaimed the page's memory while the app was in the background: load it again.
-        log.add("page", "web content process ended: reloading")
+        // iOS reclaimed the page's memory. In front: load it again now. In the background: wait
+        // for the app to come back, so that nothing loads while it cannot be seen, and once.
         mainFrameStatus = 200
-        reload()
+        if UIApplication.shared.applicationState == .active {
+            log.add("page", "web content process ended: reloading")
+            reload()
+        } else {
+            log.add("page", "web content process ended in the background: reloading when back in front")
+            reloadWhenActive = true
+        }
     }
 }
 
@@ -728,6 +772,34 @@ extension BrowserModel: WKUIDelegate {
             }
             let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in continuation.resume() })
+            presenter.present(alert, animated: true)
+        }
+    }
+
+    /// Camera and microphone, for a story, a voice message or a call. Instagram's own pages get
+    /// them without WebKit's extra dialog; iOS still asks its own permission the first time,
+    /// and the switches in Settings still apply. Any other site asks.
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
+        let host = origin.host.lowercased()
+        let trusted = host == "instagram.com" || host.hasSuffix(".instagram.com")
+        log.add("media", "\(trusted ? "granted" : "asked") capture (\(type.rawValue)) for \(host)")
+        return trusted ? .grant : .prompt
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
+                 initiatedByFrame frame: WKFrameInfo) async -> String? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            guard let presenter = topViewController() else {
+                continuation.resume(returning: nil)
+                return
+            }
+            let alert = UIAlertController(title: nil, message: prompt, preferredStyle: .alert)
+            alert.addTextField { $0.text = defaultText }
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in continuation.resume(returning: nil) })
+            alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak alert] _ in
+                continuation.resume(returning: alert?.textFields?.first?.text ?? "")
+            })
             presenter.present(alert, animated: true)
         }
     }
@@ -819,5 +891,41 @@ extension BrowserModel: WKScriptMessageHandler {
         default:
             break
         }
+    }
+}
+
+// MARK: - WKDownloadDelegate
+
+extension BrowserModel: WKDownloadDelegate {
+    private static var downloadsFolder: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("downloads", isDirectory: true)
+    }
+
+    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
+                  suggestedFilename: String) async -> URL? {
+        let folder = Self.downloadsFolder
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = suggestedFilename.isEmpty ? "download" : suggestedFilename
+        let destination = folder.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: destination)
+        downloadDestinations[ObjectIdentifier(download)] = destination
+        toast = Toast(text: "Downloading \(name)", symbol: "arrow.down.circle")
+        return destination
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        guard let file = downloadDestinations.removeValue(forKey: ObjectIdentifier(download)) else { return }
+        log.add("page", "download finished")
+        // The file is only in the app's temporary folder: the share sheet is the way to keep it
+        // (Save to Files, AirDrop, another app).
+        guard let presenter = topViewController() else { return }
+        let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+        presenter.present(sheet, animated: true)
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        downloadDestinations.removeValue(forKey: ObjectIdentifier(download))
+        log.add("error", "download: \((error as NSError).localizedDescription)")
+        toast = Toast(text: "Download failed", symbol: "exclamationmark.circle")
     }
 }
