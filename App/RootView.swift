@@ -8,7 +8,7 @@ import WebKit
 ///
 /// The strip behind the clock and the Dynamic Island belongs to the app:
 ///   - tap it to scroll to the top;
-///   - touch and hold it to open the ScrollGuard panel.
+///   - touch and hold it to open the ScrollGuard panel (the round button at the right edge does too).
 struct RootView: View {
     @EnvironmentObject private var browser: BrowserModel
     @EnvironmentObject private var youtube: YouTubeModel
@@ -68,7 +68,7 @@ struct RootView: View {
                             // Which build this is, for a few seconds after launch. Tapping it
                             // opens the panel, like touching and holding the top edge.
                             Button(action: openPanel) {
-                                Pill(text: "ScrollGuard \(DeviceInfo.appVersion) · tap for the panel",
+                                Pill(text: "ScrollGuard \(DeviceInfo.appVersion) · the round button opens the panel",
                                      symbol: "shield.lefthalf.filled")
                             }
                             .buttonStyle(.plain)
@@ -77,6 +77,7 @@ struct RootView: View {
                     }
                     .padding(.top, 10)
                 }
+                .overlay { MenuButton(action: openPanel) }
 
                 if !onYouTube, browser.showsNativeBar {
                     NativeBar(active: browser.activeTab, unread: browser.unreadMessages,
@@ -152,6 +153,55 @@ struct RootView: View {
     private func switchPlatform() {
         UISelectionFeedbackGenerator().selectionChanged()
         store.platform = onYouTube ? .instagram : .youtube
+    }
+}
+
+/// The way into the panel from any page: a small button at the right edge, over the page. It
+/// can be dragged up or down, out of the way of whatever it covers, and stays where it was put.
+private struct MenuButton: View {
+    let action: () -> Void
+    /// Where it rests, as a fraction of the page's height. Low on the right by default: above
+    /// the bars at the bottom, below where YouTube's player and Instagram's stories are.
+    @AppStorage("menuButtonY") private var restingFraction: Double = 0.7
+    @State private var dragOffset: CGFloat = 0
+    @GestureState private var isDragging = false
+
+    private let size: CGFloat = 40
+
+    var body: some View {
+        GeometryReader { geometry in
+            let height = geometry.size.height
+            let lowest = max(size / 2 + 70, height - size / 2 - 80)
+            let restingY = min(max(height * restingFraction, size / 2 + 70), lowest)
+            Button(action: action) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: size, height: size)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14)))
+                    .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+                    .scaleEffect(isDragging ? 1.1 : 1)
+            }
+            .buttonStyle(.plain)
+            .opacity(0.9)
+            .position(x: geometry.size.width - size / 2 - 10, y: restingY + dragOffset)
+            // Only the button itself is dragged: the page around it is never touched.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 8)
+                    .updating($isDragging) { _, state, _ in state = true }
+                    .onChanged { value in dragOffset = value.translation.height }
+                    .onEnded { value in
+                        let y = min(max(restingY + value.translation.height, size / 2 + 70), lowest)
+                        restingFraction = height > 0 ? y / height : restingFraction
+                        dragOffset = 0
+                        UISelectionFeedbackGenerator().selectionChanged()
+                    }
+            )
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isDragging)
+            .accessibilityLabel("ScrollGuard")
+            .accessibilityHint("Opens the ScrollGuard panel")
+        }
     }
 }
 
