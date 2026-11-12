@@ -283,6 +283,15 @@ extension YouTubeModel: WKNavigationDelegate {
             if webView.url == nil { loadHome() }
             return
         }
+        // As in BrowserModel: a tapped link to another host (youtu.be, www.youtube.com) would be
+        // handed to the YouTube app, if installed. Loaded by the app itself, it stays here.
+        if navigationAction.navigationType == .linkActivated,
+           let host = url.host?.lowercased(), host != webView.url?.host?.lowercased() {
+            log.add("yt", "link to another host, loaded here: \(host)")
+            decisionHandler(.cancel)
+            webView.load(navigationAction.request)
+            return
+        }
         decisionHandler(.allow)
     }
 

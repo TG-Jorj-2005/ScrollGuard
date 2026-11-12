@@ -652,7 +652,18 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
 
-        log.add("nav", "allow \(url.redacted)")
+        // A tapped link to another host of the family (instagram.com without www, l.instagram.com)
+        // is a universal link: WebKit would hand it to the Instagram app, if installed, and the
+        // app would leave the front. Loaded by the app itself, it stays here.
+        if navigationAction.navigationType == .linkActivated,
+           let host = url.host?.lowercased(), host != webView.url?.host?.lowercased() {
+            log.add("nav", "link to another host, loaded here: \(url.redacted)")
+            decisionHandler(.cancel)
+            webView.load(navigationAction.request)
+            return
+        }
+
+        log.add("nav", "allow \(url.redacted) (\(navigationAction.navigationType.rawValue))")
         decisionHandler(.allow)
     }
 
