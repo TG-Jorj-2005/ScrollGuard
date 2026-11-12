@@ -11,19 +11,19 @@ struct ScrollGuardApp: App {
         // One settings store and one browser for the whole life of the app.
         let store = SettingsStore()
         _store = StateObject(wrappedValue: store)
-        _browser = StateObject(wrappedValue: browser)
-        let browser = BrowserModel(store: store)
-        let youtube = YouTubeModel(store: store)
-        let notifier = Notifier()
-        browser.notifier = notifier
-        youtube.notifier = notifier
+        let browserModel = BrowserModel(store: store)
+        let youtubeModel = YouTubeModel(store: store)
+        let notifierModel = Notifier()
+        browserModel.notifier = notifierModel
+        youtubeModel.notifier = notifierModel
         // A tapped notification: the site it came from, on the page it is about.
-        notifier.onOpen = { platform, path in
+        notifierModel.onOpen = { platform, path in
             store.platform = platform
-            if platform == .instagram { browser.open(path: path) } else { youtube.open(path: path) }
+            if platform == .instagram { browserModel.open(path: path) } else { youtubeModel.open(path: path) }
         }
-        _youtube = StateObject(wrappedValue: youtube)
-        _notifier = StateObject(wrappedValue: notifier)
+        _browser = StateObject(wrappedValue: browserModel)
+        _youtube = StateObject(wrappedValue: youtubeModel)
+        _notifier = StateObject(wrappedValue: notifierModel)
     }
 
     var body: some Scene {
