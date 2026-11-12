@@ -1,0 +1,48 @@
+<!doctype html>
+<html><head><title>YouTube</title></head>
+<body>
+  <!-- Rough shape of m.youtube.com: the element names are YouTube's, the content is made up. -->
+  <ytm-app>
+    <ytm-browse>
+      <ytm-rich-grid-renderer id="grid">
+        <ytm-rich-item-renderer id="video-long">
+          <ytm-media-item><a href="/watch?v=aaaaaaaaaaa">A long video</a><span>12:34</span></ytm-media-item>
+        </ytm-rich-item-renderer>
+        <ytm-rich-item-renderer id="video-45s">
+          <ytm-media-item><a href="/watch?v=bbbbbbbbbbb">A 45 second video that is not a Short</a><span>0:45</span></ytm-media-item>
+        </ytm-rich-item-renderer>
+        <ytm-rich-section-renderer id="shorts-shelf">
+          <h2>Shorts</h2>
+          <ytm-reel-shelf-renderer>
+            <ytm-shorts-lockup-view-model id="short-1"><a href="/shorts/s1s1s1s1s1s">A short</a></ytm-shorts-lockup-view-model>
+            <ytm-shorts-lockup-view-model id="short-2"><a href="/shorts/s2s2s2s2s2s">Another</a></ytm-shorts-lockup-view-model>
+          </ytm-reel-shelf-renderer>
+        </ytm-rich-section-renderer>
+        <ytm-rich-section-renderer id="mixed-shelf">
+          <h2>Trending</h2>
+          <ytm-shelf-renderer>
+            <ytm-video-with-context-renderer id="mixed-watch"><a href="/watch?v=ccccccccccc">Trending video</a></ytm-video-with-context-renderer>
+            <ytm-video-with-context-renderer id="mixed-short"><a href="/shorts/s3s3s3s3s3s">Trending short</a></ytm-video-with-context-renderer>
+          </ytm-shelf-renderer>
+        </ytm-rich-section-renderer>
+        <ytm-rich-item-renderer id="playlist">
+          <a href="/playlist?list=PL123">A playlist</a>
+        </ytm-rich-item-renderer>
+        <ytm-rich-item-renderer id="video-last">
+          <ytm-media-item><a href="/watch?v=ddddddddddd">Last video</a></ytm-media-item>
+        </ytm-rich-item-renderer>
+      </ytm-rich-grid-renderer>
+    </ytm-browse>
+    <ytm-c4-tabbed-header-renderer id="channel-tabs">
+      <a id="tab-videos" href="/@someone/videos">Videos</a>
+      <a id="tab-shorts" href="/@someone/shorts">Shorts</a>
+      <a id="tab-playlists" href="/@someone/playlists">Playlists</a>
+    </ytm-c4-tabbed-header-renderer>
+    <ytm-pivot-bar-renderer id="bar">
+      <ytm-pivot-bar-item-renderer id="pivot-home"><div>Home</div></ytm-pivot-bar-item-renderer>
+      <ytm-pivot-bar-item-renderer id="pivot-shorts"><div>Shorts</div></ytm-pivot-bar-item-renderer>
+      <ytm-pivot-bar-item-renderer id="pivot-subs"><a href="/feed/subscriptions">Subscriptions</a></ytm-pivot-bar-item-renderer>
+      <ytm-pivot-bar-item-renderer id="pivot-library"><div>You</div></ytm-pivot-bar-item-renderer>
+    </ytm-pivot-bar-renderer>
+  </ytm-app>
+</body></html>

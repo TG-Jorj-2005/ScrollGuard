@@ -1,0 +1,25 @@
+/*
+ * ScrollGuard stylesheet for m.youtube.com, injected by youtube.js. YouTube's own element
+ * names (ytm-...) are stable; class names are not, so none are used.
+ */
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+body {
+  overscroll-behavior-x: none;
+}
+
+/* --- Shorts filter: only while <html data-sg-hide> is set (the "Hide Shorts" switch). --- */
+
+/* Links into the Shorts viewer, hidden before the script has marked their cards. */
+html[data-sg-hide] a[href^="/shorts/"] {
+  display: none !important;
+}
+
+/* Whatever youtube.js marked: the bar's entry, shelves, cards. */
+html[data-sg-hide] [data-sg-hidden] {
+  display: none !important;
+}

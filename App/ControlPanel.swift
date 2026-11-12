@@ -5,6 +5,7 @@ import UIKit
 /// edge of the screen.
 struct ControlPanel: View {
     @EnvironmentObject private var browser: BrowserModel
+    @EnvironmentObject private var youtube: YouTubeModel
     @EnvironmentObject private var store: SettingsStore
     @Environment(\.dismiss) private var dismiss
     @State private var confirmClear = false
@@ -18,6 +19,33 @@ struct ControlPanel: View {
                 }
                 .listRowInsets(EdgeInsets())
                 .listRowBackground(Color.clear)
+
+                Section {
+                    Picker("Site", selection: $store.platform) {
+                        ForEach(Platform.allCases) { platform in
+                            Label(platform.title, systemImage: platform.symbol).tag(platform)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } footer: {
+                    Text("Or swipe left or right across the top edge of the screen.")
+                }
+
+                Section {
+                    FilterToggle(title: "Hide Shorts",
+                                 detail: "Removes the Shorts tab, shelves and cards, and stops the Shorts viewer.",
+                                 isOn: $store.settings.hideShorts)
+                    Button {
+                        youtube.reload()
+                        dismiss()
+                    } label: {
+                        Label("Reload YouTube", systemImage: "arrow.clockwise")
+                    }
+                } header: {
+                    Text("YouTube")
+                } footer: {
+                    Text("Normal videos stay, however short. Hidden so far: \(youtube.hiddenCount), stopped: \(youtube.blockedCount).")
+                }
 
                 Section {
                     FilterToggle(title: "Hide Reels",

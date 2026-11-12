@@ -11,34 +11,55 @@ import WebKit
 ///   - touch and hold it to open the ScrollGuard panel.
 struct RootView: View {
     @EnvironmentObject private var browser: BrowserModel
+    @EnvironmentObject private var youtube: YouTubeModel
     /// Observed so that flipping a switch in the panel redraws this view (the native bar).
     @EnvironmentObject private var store: SettingsStore
     @State private var showPanel = false
     @State private var showHint = false
 
+    private var onYouTube: Bool { store.platform == .youtube }
+    // The state of whichever site is on screen.
+    private var progress: Double { onYouTube ? youtube.progress : browser.progress }
+    private var isLoading: Bool { onYouTube ? youtube.isLoading : browser.isLoading }
+    private var failure: BrowserModel.Failure? { onYouTube ? youtube.failure : browser.failure }
+    private var hasShownFirstPage: Bool { onYouTube ? youtube.hasShownFirstPage : browser.hasShownFirstPage }
+    private var toast: BrowserModel.Toast? { onYouTube ? youtube.toast : browser.toast }
+    private var topEdgeColor: UIColor { onYouTube ? .black : browser.topEdgeColor }
+    private var bottomEdgeColor: UIColor { onYouTube ? .black : browser.bottomEdgeColor }
+
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                StatusStrip(color: Color(uiColor: browser.topEdgeColor),
-                            onTap: { browser.scrollToTop() }, onHold: openPanel)
+                StatusStrip(color: Color(uiColor: topEdgeColor),
+                            onTap: { onYouTube ? youtube.scrollToTop() : browser.scrollToTop() },
+                            onHold: openPanel, onSwipe: { switchPlatform() })
                     .frame(height: geometry.safeAreaInsets.top)
 
                 ZStack(alignment: .top) {
+                    // Both web views stay in the layout, so switching never reloads either.
                     WebContainer(webView: browser.webView)
+                        .opacity(onYouTube ? 0 : 1)
+                        .scaleEffect(onYouTube ? 0.96 : 1)
+                        .allowsHitTesting(!onYouTube)
+                    WebContainer(webView: youtube.webView)
+                        .opacity(onYouTube ? 1 : 0)
+                        .scaleEffect(onYouTube ? 1 : 0.96)
+                        .allowsHitTesting(onYouTube)
 
-                    if let failure = browser.failure {
-                        FailureView(failure: failure, retry: { browser.reload() })
+                    if let failure {
+                        FailureView(site: store.platform.title, failure: failure,
+                                    retry: { onYouTube ? youtube.reload() : browser.reload() })
                             .transition(.opacity)
                     }
-                    if !browser.hasShownFirstPage {
-                        LaunchCover(image: browser.launchImage)
+                    if !hasShownFirstPage {
+                        LaunchCover(image: onYouTube ? nil : browser.launchImage)
                             .transition(.opacity)
                     }
 
-                    ProgressLine(progress: browser.progress, isLoading: browser.isLoading)
+                    ProgressLine(progress: progress, isLoading: isLoading)
 
                     VStack(spacing: 8) {
-                        if let toast = browser.toast {
+                        if let toast {
                             Pill(text: toast.text, symbol: toast.symbol)
                                 .transition(.move(edge: .top).combined(with: .opacity))
                                 .allowsHitTesting(false)
@@ -57,7 +78,7 @@ struct RootView: View {
                     .padding(.top, 10)
                 }
 
-                if browser.showsNativeBar {
+                if !onYouTube, browser.showsNativeBar {
                     NativeBar(active: browser.activeTab, unread: browser.unreadMessages,
                               color: Color(uiColor: browser.bottomEdgeColor)) { tab in
                         browser.select(tab)
@@ -67,17 +88,18 @@ struct RootView: View {
             }
             .ignoresSafeArea(.container, edges: .top)
             .animation(.spring(response: 0.32, dampingFraction: 0.9), value: browser.showsNativeBar)
+            .animation(.spring(response: 0.35, dampingFraction: 0.9), value: store.platform)
         }
         // What shows under the home indicator: the colour of the page's bottom edge.
-        .background(Color(uiColor: browser.bottomEdgeColor).ignoresSafeArea())
+        .background(Color(uiColor: bottomEdgeColor).ignoresSafeArea())
         // Like Safari: the keyboard covers the page instead of squeezing it; Instagram's own
         // layout already moves the message box above the keyboard.
         .ignoresSafeArea(.keyboard)
-        .animation(.easeOut(duration: 0.25), value: browser.topEdgeColor)
-        .animation(.easeOut(duration: 0.25), value: browser.bottomEdgeColor)
-        .animation(.easeOut(duration: 0.35), value: browser.hasShownFirstPage)
-        .animation(.easeOut(duration: 0.25), value: browser.failure)
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: browser.toast)
+        .animation(.easeOut(duration: 0.25), value: topEdgeColor)
+        .animation(.easeOut(duration: 0.25), value: bottomEdgeColor)
+        .animation(.easeOut(duration: 0.35), value: hasShownFirstPage)
+        .animation(.easeOut(duration: 0.25), value: failure)
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: toast)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showHint)
         .sheet(isPresented: $showPanel) {
             ControlPanel()
@@ -86,10 +108,22 @@ struct RootView: View {
             SafariView(url: link.url)
                 .ignoresSafeArea()
         }
+        .sheet(item: $youtube.externalLink) { link in
+            SafariView(url: link.url)
+                .ignoresSafeArea()
+        }
         .task(id: browser.toast?.id) {
             guard browser.toast != nil else { return }
             try? await Task.sleep(nanoseconds: 1_800_000_000)
             if !Task.isCancelled { browser.toast = nil }
+        }
+        .task(id: youtube.toast?.id) {
+            guard youtube.toast != nil else { return }
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            if !Task.isCancelled { youtube.toast = nil }
+        }
+        .onChange(of: store.platform, initial: true) { _, platform in
+            if platform == .youtube { youtube.start() }
         }
         .task(id: browser.hasShownFirstPage) {
             // On the first start after an update, briefly: which version this is, and the way
@@ -113,6 +147,12 @@ struct RootView: View {
         showHint = false
         showPanel = true
     }
+
+    /// A swipe across the top edge: the other site, with its page as it was left.
+    private func switchPlatform() {
+        UISelectionFeedbackGenerator().selectionChanged()
+        store.platform = onYouTube ? .instagram : .youtube
+    }
 }
 
 /// The area behind the status bar, in the colour of the page under it.
@@ -120,12 +160,17 @@ private struct StatusStrip: View {
     let color: Color
     let onTap: () -> Void
     let onHold: () -> Void
+    let onSwipe: () -> Void
 
     var body: some View {
         color
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
             .onLongPressGesture(minimumDuration: 0.35, perform: onHold)
+            .gesture(DragGesture(minimumDistance: 30).onEnded { value in
+                let dx = value.translation.width, dy = value.translation.height
+                if abs(dx) > 50, abs(dx) > abs(dy) * 2 { onSwipe() }
+            })
             .accessibilityLabel("ScrollGuard")
             .accessibilityHint("Touch and hold to open the ScrollGuard panel")
     }
@@ -272,14 +317,15 @@ private struct LaunchCover: View {
 
 /// Shown instead of the page when nothing could be loaded at all.
 private struct FailureView: View {
+    let site: String
     let failure: BrowserModel.Failure
     let retry: () -> Void
 
     private var title: String {
         switch failure {
         case .offline: return "No connection"
-        case .http: return "Instagram isn't answering"
-        case .other: return "Couldn't open Instagram"
+        case .http: return "\(site) isn't answering"
+        case .other: return "Couldn't open \(site)"
         }
     }
 
@@ -288,9 +334,9 @@ private struct FailureView: View {
         case .offline:
             return "Check Wi-Fi or mobile data, then try again."
         case .http(429):
-            return "Instagram is limiting requests from this connection (error 429). Wait a minute, then try again."
+            return "\(site) is limiting requests from this connection (error 429). Wait a minute, then try again."
         case .http(let status):
-            return "Instagram answered with error \(status). Try again in a moment."
+            return "\(site) answered with error \(status). Try again in a moment."
         case .other(let message):
             return message
         }

@@ -12,6 +12,8 @@ struct FilterSettings: Equatable {
     var nativeBar = true
     /// A short slide when a page opens on top of another.
     var pageTransitions = true
+    /// YouTube: hide the Shorts tab, shelves and cards, and refuse the Shorts viewer.
+    var hideShorts = true
 
     var isProtecting: Bool { hideReels && blockReelsFeed && singleClip }
 
@@ -26,13 +28,26 @@ struct FilterSettings: Equatable {
     /// For the diagnostics log.
     var summary: String {
         "hideReels=\(hideReels) blockReelsFeed=\(blockReelsFeed) singleClip=\(singleClip) "
-            + "nativeBar=\(nativeBar) pageTransitions=\(pageTransitions)"
+            + "nativeBar=\(nativeBar) pageTransitions=\(pageTransitions) hideShorts=\(hideShorts)"
     }
+}
+
+/// The two sites the app shows, each in a web view of its own.
+enum Platform: String, CaseIterable, Identifiable {
+    case instagram, youtube
+    var id: String { rawValue }
+    var title: String { self == .instagram ? "Instagram" : "YouTube" }
+    var symbol: String { self == .instagram ? "camera" : "play.rectangle" }
 }
 
 /// Keeps the switches in UserDefaults, so they are the same after the app restarts.
 @MainActor
 final class SettingsStore: ObservableObject {
+    /// Which site is on screen; the app reopens on the one shown last.
+    @Published var platform: Platform {
+        didSet { defaults.set(platform.rawValue, forKey: Keys.platform) }
+    }
+
     @Published var settings: FilterSettings {
         didSet {
             guard settings != oldValue else { return }
@@ -41,6 +56,7 @@ final class SettingsStore: ObservableObject {
             defaults.set(settings.singleClip, forKey: Keys.singleClip)
             defaults.set(settings.nativeBar, forKey: Keys.nativeBar)
             defaults.set(settings.pageTransitions, forKey: Keys.pageTransitions)
+            defaults.set(settings.hideShorts, forKey: Keys.hideShorts)
         }
     }
 
@@ -52,6 +68,8 @@ final class SettingsStore: ObservableObject {
         static let singleClip = "singleClip"
         static let nativeBar = "nativeBar"
         static let pageTransitions = "pageTransitions"
+        static let hideShorts = "hideShorts"
+        static let platform = "platform"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -62,6 +80,8 @@ final class SettingsStore: ObservableObject {
                                   blockReelsFeed: stored(Keys.blockReelsFeed),
                                   singleClip: stored(Keys.singleClip),
                                   nativeBar: stored(Keys.nativeBar),
-                                  pageTransitions: stored(Keys.pageTransitions))
+                                  pageTransitions: stored(Keys.pageTransitions),
+                                  hideShorts: stored(Keys.hideShorts))
+        platform = Platform(rawValue: defaults.string(forKey: Keys.platform) ?? "") ?? .instagram
     }
 }
