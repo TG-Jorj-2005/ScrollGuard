@@ -102,3 +102,15 @@ test('arriving on /shorts/ by in-page navigation is reported as blocked', async 
   page.window.history.pushState({}, '', '/watch?v=aaaaaaaaaaa');
   assert.equal(page.messages.filter((m) => m.t === 'blocked').length, 1);
 });
+
+test('the count on the bell is reported once, and again when it changes', async () => {
+  const page = open();
+  await sleep(250);
+  const bells = () => page.messages.filter((m) => m.t === 'bell').map((m) => m.n);
+  assert.deepEqual(bells(), [3]);
+  page.document.getElementById('bell-count').textContent = '5';
+  await sleep(1700);
+  assert.deepEqual(bells(), [3, 5]);
+  // The bell itself is never hidden: it is not a Short.
+  assert.equal(isHidden(page.document, 'bell'), false);
+});

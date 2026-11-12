@@ -14,6 +14,10 @@ struct FilterSettings: Equatable {
     var pageTransitions = true
     /// YouTube: hide the Shorts tab, shelves and cards, and refuse the Shorts viewer.
     var hideShorts = true
+    /// A notification when Instagram's count of unread conversations rises.
+    var notifyInstagram = false
+    /// A notification when the count on YouTube's bell rises.
+    var notifyYouTube = false
 
     var isProtecting: Bool { hideReels && blockReelsFeed && singleClip }
 
@@ -28,7 +32,8 @@ struct FilterSettings: Equatable {
     /// For the diagnostics log.
     var summary: String {
         "hideReels=\(hideReels) blockReelsFeed=\(blockReelsFeed) singleClip=\(singleClip) "
-            + "nativeBar=\(nativeBar) pageTransitions=\(pageTransitions) hideShorts=\(hideShorts)"
+            + "nativeBar=\(nativeBar) pageTransitions=\(pageTransitions) hideShorts=\(hideShorts) "
+            + "notify=\(notifyInstagram)/\(notifyYouTube)"
     }
 }
 
@@ -57,6 +62,8 @@ final class SettingsStore: ObservableObject {
             defaults.set(settings.nativeBar, forKey: Keys.nativeBar)
             defaults.set(settings.pageTransitions, forKey: Keys.pageTransitions)
             defaults.set(settings.hideShorts, forKey: Keys.hideShorts)
+            defaults.set(settings.notifyInstagram, forKey: Keys.notifyInstagram)
+            defaults.set(settings.notifyYouTube, forKey: Keys.notifyYouTube)
         }
     }
 
@@ -69,6 +76,8 @@ final class SettingsStore: ObservableObject {
         static let nativeBar = "nativeBar"
         static let pageTransitions = "pageTransitions"
         static let hideShorts = "hideShorts"
+        static let notifyInstagram = "notifyInstagram"
+        static let notifyYouTube = "notifyYouTube"
         static let platform = "platform"
     }
 
@@ -81,7 +90,10 @@ final class SettingsStore: ObservableObject {
                                   singleClip: stored(Keys.singleClip),
                                   nativeBar: stored(Keys.nativeBar),
                                   pageTransitions: stored(Keys.pageTransitions),
-                                  hideShorts: stored(Keys.hideShorts))
+                                  hideShorts: stored(Keys.hideShorts),
+                                  // Off until asked for: turning one on asks iOS for permission.
+                                  notifyInstagram: defaults.bool(forKey: Keys.notifyInstagram),
+                                  notifyYouTube: defaults.bool(forKey: Keys.notifyYouTube))
         platform = Platform(rawValue: defaults.string(forKey: Keys.platform) ?? "") ?? .instagram
     }
 }

@@ -178,6 +178,26 @@
     post({ t: 'blocked', path: '/shorts/', via: 'tap' });
   }, true);
 
+  // --- The bell: how many notifications YouTube itself shows, for the app's own banner. ---
+
+  var lastBell = -1;
+  function reportBell() {
+    var bell = document.querySelector('ytm-notification-topbar-button-renderer, a[href="/feed/notifications"]');
+    var count = 0;
+    if (bell) {
+      // The number on the bell, if any; its label ("Notifications 3") otherwise.
+      var match = /(\d+)/.exec(textOf(bell)) || /(\d+)/.exec(bell.getAttribute('aria-label') || '');
+      count = match ? parseInt(match[1], 10) : 0;
+    } else {
+      count = lastBell > 0 ? lastBell : 0; // bell not on this page: nothing new to say
+    }
+    if (count !== lastBell) {
+      lastBell = count;
+      post({ t: 'bell', n: count });
+    }
+  }
+  setInterval(reportBell, 1500);
+
   // --- Set-up ---
 
   function installStyle() {
@@ -213,6 +233,7 @@
     new MutationObserver(function () { scheduleScan(); })
       .observe(document.body || root, { childList: true, subtree: true });
     scan();
+    reportBell();
     post({ t: 'drawn', path: location.pathname });
   }
   if (document.body) start();

@@ -23,6 +23,9 @@ final class YouTubeModel: NSObject, ObservableObject {
     @Published private(set) var failure: Failure?
     @Published private(set) var hiddenCount = 0
     @Published private(set) var blockedCount = 0
+    /// The count on YouTube's bell, as the page shows it (signed in only).
+    @Published private(set) var bellCount = 0
+    weak var notifier: Notifier?
     @Published var toast: Toast?
     @Published var externalLink: ExternalLink?
 
@@ -99,6 +102,13 @@ final class YouTubeModel: NSObject, ObservableObject {
         started = true
         log.add("yt", "start")
         loadHome()
+    }
+
+    /// Opens a page of YouTube, from a tapped notification.
+    func open(path: String) {
+        guard let url = URL(string: path, relativeTo: Self.home), Self.isYouTube(url) else { return }
+        start()
+        if webView.url?.path != url.path { webView.load(URLRequest(url: url)) }
     }
 
     func loadHome() {
@@ -388,6 +398,14 @@ extension YouTubeModel: WKScriptMessageHandler {
             }
         case "drawn":
             revealPage()
+        case "bell":
+            if let count = (body["n"] as? NSNumber)?.intValue, count >= 0, count < 1000, count != bellCount {
+                bellCount = count
+                log.add("yt", "bell: \(count)")
+                let inFront = store.platform == .youtube && webView.url?.path == "/feed/notifications"
+                    && UIApplication.shared.applicationState == .active
+                notifier?.youtubeActivity(count, enabled: store.settings.notifyYouTube, onScreen: inFront)
+            }
         default:
             break
         }
