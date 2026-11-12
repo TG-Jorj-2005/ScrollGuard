@@ -12,8 +12,16 @@ import UserNotifications
 final class Notifier: NSObject, ObservableObject {
     @Published private(set) var authorization: UNAuthorizationStatus = .notDetermined
 
-    /// Set by the app: switches site and opens a path when a notification is tapped.
-    var onOpen: ((Platform, String) -> Void)?
+    /// Set by the app once the web views exist: switches site and opens a path when a
+    /// notification is tapped. A tap that arrives before then is kept until it is set.
+    var onOpen: ((Platform, String) -> Void)? {
+        didSet {
+            guard let onOpen, let pending else { return }
+            self.pending = nil
+            onOpen(pending.platform, pending.path)
+        }
+    }
+    private var pending: (platform: Platform, path: String)?
 
     private let center = UNUserNotificationCenter.current()
     private let log = DiagnosticsLog.shared
@@ -107,6 +115,6 @@ extension Notifier: UNUserNotificationCenterDelegate {
         guard let raw = info["platform"] as? String, let platform = Platform(rawValue: raw),
               let path = info["path"] as? String, path.hasPrefix("/") else { return }
         log.add("notify", "opened \(raw)")
-        onOpen?(platform, path)
+        if let onOpen { onOpen(platform, path) } else { pending = (platform, path) }
     }
 }
