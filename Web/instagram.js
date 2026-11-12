@@ -277,6 +277,8 @@
     if (!link) return;
     var url;
     try { url = new URL(link.getAttribute('href'), location.href); } catch (e) { return; }
+    post({ t: 'tap', path: INSTAGRAM.test(url.hostname) ? url.pathname : '/', via: url.hostname,
+           target: link.getAttribute('target') || '' });
     if (!INSTAGRAM.test(url.hostname)) return;
     var route = classify(url.pathname);
     if (!route || route.kind !== 'feed' || !cfg.blockReelsFeed) return;

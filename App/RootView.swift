@@ -102,6 +102,10 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.25), value: failure)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: toast)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: showHint)
+        .onChange(of: showPanel) { _, shown in DiagnosticsLog.shared.add("ui", shown ? "panel opened" : "panel closed") }
+        .onChange(of: browser.externalLink?.id) { _, id in
+            DiagnosticsLog.shared.add("ui", id == nil ? "safari sheet closed" : "safari sheet for \(browser.externalLink?.url.host ?? "?")")
+        }
         .sheet(isPresented: $showPanel) {
             ControlPanel()
         }
@@ -215,11 +219,20 @@ private struct StatusStrip: View {
     var body: some View {
         color
             .contentShape(Rectangle())
-            .onTapGesture(perform: onTap)
-            .onLongPressGesture(minimumDuration: 0.35, perform: onHold)
+            .onTapGesture {
+                DiagnosticsLog.shared.add("ui", "top edge tapped")
+                onTap()
+            }
+            .onLongPressGesture(minimumDuration: 0.35) {
+                DiagnosticsLog.shared.add("ui", "top edge held")
+                onHold()
+            }
             .gesture(DragGesture(minimumDistance: 30).onEnded { value in
                 let dx = value.translation.width, dy = value.translation.height
-                if abs(dx) > 50, abs(dx) > abs(dy) * 2 { onSwipe() }
+                if abs(dx) > 50, abs(dx) > abs(dy) * 2 {
+                    DiagnosticsLog.shared.add("ui", "top edge swiped: other site")
+                    onSwipe()
+                }
             })
             .accessibilityLabel("ScrollGuard")
             .accessibilityHint("Touch and hold to open the ScrollGuard panel")
