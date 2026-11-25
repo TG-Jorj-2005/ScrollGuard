@@ -7,6 +7,12 @@ infinit. Feed-ul, profilurile, mesajele, căutarea și story-urile rămân.
 Nu are backend, analytics sau conturi proprii. Te autentifici pe pagina Instagram; aplicația nu
 vede și nu stochează parola. User-Agent-ul este cel implicit al WebKit.
 
+## Demonstrație video
+
+Navigare prin panoul nativ al filtrelor ScrollGuard, într-un simulator iPhone.
+
+https://github.com/user-attachments/assets/bc53d218-a538-480a-b51b-b9fb197cc069
+
 ## Instalare și actualizare (SideStore)
 
 1. Pe iPhone, deschide în Safari `https://github.com/TG-Jorj-2005/ScrollGuard/releases/latest`
